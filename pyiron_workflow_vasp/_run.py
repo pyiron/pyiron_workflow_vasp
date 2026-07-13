@@ -40,10 +40,10 @@ def run_vasp(
         4. write KPOINTS (built from kpoints_density)
         5. write POTCAR (via potcar_config_file)
         6. shell out to `command`
-        7. parse via pyiron_vasp.vasp.output.parse_vasp_output
+        7. parse via vaspparser.vasp.output.parse_vasp_output
         8. map parsed dict -> EngineOutput
     """
-    from pyiron_vasp.vasp.output import parse_vasp_output
+    from vaspparser.vasp.output import parse_vasp_output
 
     from pyiron_workflow_vasp.generic import shell
     from pyiron_workflow_vasp.vasp import (
@@ -146,13 +146,13 @@ def _build_kpoints(structure: Atoms, kpoints_density: float):
 
 
 def _to_engine_output(parsed: dict) -> EngineOutput:
-    """Map the pyiron_vasp parse_vasp_output return dict to EngineOutput.
+    """Map the vaspparser parse_vasp_output return dict to EngineOutput.
 
     The parse_vasp_output result is structured as
         {"generic": {"energy_tot": [...], "positions": [...], "cells": [...],
                      "forces": [...], "stresses": [...], ...},
          "converged": bool, ...}
-    Specific keys depend on pyiron_vasp version - adapt here.
+    Specific keys depend on vaspparser version - adapt here.
     """
     from ase import Atoms as ASEAtoms
 

@@ -15,7 +15,7 @@ from pymatgen.io.vasp.inputs import Incar, Kpoints
 from pymatgen.io.vasp.outputs import Vasprun
 from pymatgen.io.ase import AseAtomsAdaptor
 
-from pyiron_vasp.vasp.output import parse_vasp_output as pyiron_atomistics_pvo
+from vaspparser.vasp.output import parse_vasp_output as pyiron_atomistics_pvo
 
 from ase import Atoms
 
@@ -305,7 +305,7 @@ def parse_VaspOutput(workdir, function=None, parser_args=None):
     Args:
         workdir (str): Path to the working directory containing VASP output files.
         function (callable, optional): Custom parser to use. If ``None``, the
-            default ``pyiron_vasp.vasp.output.parse_vasp_output`` is used and
+            default ``vaspparser.vasp.output.parse_vasp_output`` is used and
             ``parser_args`` is overridden with ``{"working_directory": workdir}``.
         parser_args (dict, optional): Keyword arguments to pass to ``function``.
             Ignored when ``function`` is ``None``.
@@ -314,7 +314,7 @@ def parse_VaspOutput(workdir, function=None, parser_args=None):
         dict: Dictionary containing parsed VASP output data.
     """
     if function is None:
-        from pyiron_vasp.vasp.output import parse_vasp_output as parse_vasp_directory
+        from vaspparser.vasp.output import parse_vasp_output as parse_vasp_directory
         parser_args = {"working_directory": workdir}
     else:
         parse_vasp_directory = function

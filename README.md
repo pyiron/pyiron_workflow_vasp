@@ -32,7 +32,7 @@ You also need a working `vasp_std` (or equivalent) binary on `$PATH` and a
 - Python `>=3.10, <3.13`
 - `pyiron-workflow-atomistics >= 0.0.6` (Engine Protocol)
 - `pyiron-workflow >= 0.15.6`
-- `pyiron_vasp >= 0.2.19` (POSCAR/INCAR/KPOINTS/POTCAR + vasprun parsing)
+- `vaspparser >= 0.0.6` (POSCAR/INCAR/KPOINTS/POTCAR + vasprun parsing)
 - `ase`, `pymatgen`, `numpy`, `pandas`, `scipy`, `matplotlib`, `scikit-learn`
 
 Exact pins are tracked in [`.ci_support/environment.yml`](.ci_support/environment.yml).

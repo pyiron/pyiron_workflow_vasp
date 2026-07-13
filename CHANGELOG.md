@@ -13,7 +13,7 @@ versioning: PEP 440.
   `pyiron_workflow_atomistics.engine.Engine` Protocol contract for
   `CalcInputStatic` and `CalcInputMinimize`. Wraps the existing
   POSCAR/INCAR/KPOINTS/POTCAR helpers + `generic.shell` +
-  `pyiron_vasp.vasp.output.parse_vasp_output` via the new internal
+  `vaspparser.vasp.output.parse_vasp_output` via the new internal
   `_run.py:run_vasp`. `CalcInputMD` raises `NotImplementedError` at
   construction time - MD wiring is a future PR.
 - `pyiron_workflow_vasp` is now reachable from atomistics' physics

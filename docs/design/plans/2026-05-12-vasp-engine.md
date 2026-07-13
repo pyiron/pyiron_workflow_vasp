@@ -6,7 +6,7 @@
 
 **Architecture:** Greenfield addition — no existing public symbol moves or breaks. New `engine.py` holds `VaspEngine` as a `@dataclass`; new `_run.py` holds the `run_vasp(...)` callable that composes the existing `write_POSCAR/INCAR/KPOINTS/POTCAR` helpers + `shell` + `parse_vasp_output` and returns a real `EngineOutput`. CI smoke uses a **mocked `vasp_std`** that copies canned `vasprun.xml`/`OUTCAR`/`CONTCAR` files into the run dir; the parser then exercises end-to-end without needing a real VASP binary in CI.
 
-**Tech Stack:** Python 3.10+, `dataclasses`, `pyiron_workflow_atomistics==0.0.5` (Protocol + `EngineOutput` + `EngineConformanceTests`), existing repo helpers (`vasp.py`, `vasp_parser/`, `generic.shell`), `pyiron_vasp.vasp.output.parse_vasp_output` for the real parse path, pytest. Real `vasp_std` is opt-in only (`@pytest.mark.real_vasp`); CI uses the mock.
+**Tech Stack:** Python 3.10+, `dataclasses`, `pyiron_workflow_atomistics==0.0.5` (Protocol + `EngineOutput` + `EngineConformanceTests`), existing repo helpers (`vasp.py`, `vasp_parser/`, `generic.shell`), `vaspparser.vasp.output.parse_vasp_output` for the real parse path, pytest. Real `vasp_std` is opt-in only (`@pytest.mark.real_vasp`); CI uses the mock.
 
 **Spec:** `docs/design/specs/2026-05-12-vasp-engine-design.md`.
 
@@ -94,7 +94,7 @@ dependencies = [
     "scipy==1.17.1",
     "pyiron-workflow==0.15.6",
     "pyiron-workflow-atomistics==0.0.5",
-    "pyiron_vasp==0.2.5",
+    "vaspparser==0.0.6",
     "pymatgen==2026.5.4",
     "pyiron_snippets==1.2.1",
     "scikit-learn==1.8.0",
@@ -525,10 +525,10 @@ def run_vasp(
         4. write KPOINTS (built from kpoints_density)
         5. write POTCAR (via potcar_config_file)
         6. shell out to `command`
-        7. parse via pyiron_vasp.vasp.output.parse_vasp_output
+        7. parse via vaspparser.vasp.output.parse_vasp_output
         8. map parsed dict → EngineOutput
     """
-    from pyiron_vasp.vasp.output import parse_vasp_output
+    from vaspparser.vasp.output import parse_vasp_output
 
     from pyiron_workflow_vasp.generic import shell
     from pyiron_workflow_vasp.vasp import (
@@ -631,13 +631,13 @@ def _build_kpoints(structure: Atoms, kpoints_density: float):
 
 
 def _to_engine_output(parsed: dict) -> EngineOutput:
-    """Map the pyiron_vasp parse_vasp_output return dict to EngineOutput.
+    """Map the vaspparser parse_vasp_output return dict to EngineOutput.
 
     The parse_vasp_output result is structured as
         {"generic": {"energy_tot": [...], "positions": [...], "cells": [...],
                      "forces": [...], "stresses": [...], ...},
          "converged": bool, ...}
-    Specific keys depend on pyiron_vasp version — adapt here.
+    Specific keys depend on vaspparser version — adapt here.
     """
     from ase import Atoms as ASEAtoms
 
@@ -687,7 +687,7 @@ def _to_engine_output(parsed: dict) -> EngineOutput:
     )
 ```
 
-Important: keys like `energy_pot` vs `energy_tot`, `species` vs `species_list` reflect uncertainty about the exact `pyiron_vasp.vasp.output.parse_vasp_output` schema. The `_to_engine_output` uses `.get` fallbacks so a mismatch surfaces as `None`-valued optional fields, not a hard crash. **Task 8 step 2** validates the exact mapping against a real fixture.
+Important: keys like `energy_pot` vs `energy_tot`, `species` vs `species_list` reflect uncertainty about the exact `vaspparser.vasp.output.parse_vasp_output` schema. The `_to_engine_output` uses `.get` fallbacks so a mismatch surfaces as `None`-valued optional fields, not a hard crash. **Task 8 step 2** validates the exact mapping against a real fixture.
 
 - [ ] **Step 4: Re-run the test — expect 2 passed**
 
@@ -1036,7 +1036,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Create: `tests/unit/test_numerical_regression.py`
 
-This file pins specific numerical outputs from the canned fixtures so future pyiron_vasp parser bumps can't silently change what `_to_engine_output` produces. Skipif-guarded just like the conformance run.
+This file pins specific numerical outputs from the canned fixtures so future vaspparser parser bumps can't silently change what `_to_engine_output` produces. Skipif-guarded just like the conformance run.
 
 - [ ] **Step 1: Create the regression test**
 
@@ -1114,7 +1114,7 @@ git commit -m "test(regression): pin parser golden values
 
 Skipif-guarded against missing canned fixtures. Activates as soon as
 a maintainer regenerates cu_static/{vasprun.xml,OUTCAR,CONTCAR} and
-fills in GOLDEN_ENERGY_EV. Defends against silent pyiron_vasp parser
+fills in GOLDEN_ENERGY_EV. Defends against silent vaspparser parser
 behaviour changes that would alter what _to_engine_output yields.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -1216,7 +1216,7 @@ dependencies:
   - pip:
       - pyiron-workflow-atomistics==0.0.5
       - pyiron-snippets==1.2.1
-      - pyiron_vasp==0.2.5
+      - vaspparser==0.0.6
 ```
 
 - [ ] **Step 5: Create `.ci_support/lower-bound.yml`**
@@ -1243,7 +1243,7 @@ dependencies:
   - pip:
       - pyiron-workflow-atomistics==0.0.5
       - pyiron-snippets==1.2.1
-      - pyiron_vasp==0.2.5
+      - vaspparser==0.0.6
 ```
 
 - [ ] **Step 6: Verify the local action's Python script runs**
@@ -1304,7 +1304,7 @@ versioning: PEP 440.
   `pyiron_workflow_atomistics.engine.Engine` Protocol contract for
   `CalcInputStatic` and `CalcInputMinimize`. Wraps the existing
   POSCAR/INCAR/KPOINTS/POTCAR helpers + `generic.shell` +
-  `pyiron_vasp.vasp.output.parse_vasp_output` via the new internal
+  `vaspparser.vasp.output.parse_vasp_output` via the new internal
   `_run.py:run_vasp`. `CalcInputMD` raises `NotImplementedError` at
   construction time — MD wiring is a future PR.
 - `pyiron_workflow_vasp` is now reachable from atomistics' physics
@@ -1460,7 +1460,7 @@ Expected: PR state moves from `DRAFT` to `OPEN`.
 gh pr edit 1 --repo ligerzero-ai/pyiron_workflow_vasp --body "$(cat <<'EOF'
 ## Summary
 
-Adds a `VaspEngine` `@dataclass` satisfying the `pyiron_workflow_atomistics==0.0.5` Engine Protocol contract (Static + Minimize). Wraps the existing POSCAR/INCAR/KPOINTS/POTCAR helpers + `generic.shell` + `pyiron_vasp.vasp.output.parse_vasp_output` via a new internal `_run.py:run_vasp`. CalcInputMD raises NotImplementedError — future PR.
+Adds a `VaspEngine` `@dataclass` satisfying the `pyiron_workflow_atomistics==0.0.5` Engine Protocol contract (Static + Minimize). Wraps the existing POSCAR/INCAR/KPOINTS/POTCAR helpers + `generic.shell` + `vaspparser.vasp.output.parse_vasp_output` via a new internal `_run.py:run_vasp`. CalcInputMD raises NotImplementedError — future PR.
 
 ## Concrete changes
 
@@ -1516,7 +1516,7 @@ Expected: PR body updated.
 | KPOINTS via pymatgen automatic_density | Task 4 step 3 (`_build_kpoints`) |
 | POTCAR via `read_potcar_config` + `get_default_POTCAR_paths` | Task 4 step 3 |
 | Shell out via `generic.shell` | Task 4 step 3 |
-| Parse via `pyiron_vasp.vasp.output.parse_vasp_output` | Task 4 step 3 |
+| Parse via `vaspparser.vasp.output.parse_vasp_output` | Task 4 step 3 |
 | Parsed dict → EngineOutput mapping | Task 4 step 3 (`_to_engine_output`) |
 | Conformance harness with mocked vasp_std | Task 6 |
 | Mock command: `bash -c 'cp -r fixture/* . && true'` | Task 6 step 1 |
