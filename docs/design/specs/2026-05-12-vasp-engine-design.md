@@ -11,7 +11,7 @@
 
 ## Problem
 
-`pyiron_workflow_vasp` (HEAD = `ff54816`) does not depend on `pyiron_workflow_atomistics` at all. It exposes a collection of standalone helper functions (`pyiron_workflow_vasp.vasp.read_potcar_config`, INCAR/KPOINTS construction, POTCAR resolution, `parse_vasp_output`) wrapping `pyiron_vasp` and pymatgen, plus a handful of shell utilities in `generic.py`. There is no `Engine` class.
+`pyiron_workflow_vasp` (HEAD = `ff54816`) does not depend on `pyiron_workflow_atomistics` at all. It exposes a collection of standalone helper functions (`pyiron_workflow_vasp.vasp.read_potcar_config`, INCAR/KPOINTS construction, POTCAR resolution, `parse_vasp_output`) wrapping `vaspparser` and pymatgen, plus a handful of shell utilities in `generic.py`. There is no `Engine` class.
 
 Consequences:
 
@@ -148,7 +148,7 @@ def run_vasp(
         write_potcar,
     )
     from pyiron_workflow_vasp.generic import shell
-    from pyiron_vasp.vasp.output import parse_vasp_output
+    from vaspparser.vasp.output import parse_vasp_output
 
     os.makedirs(working_directory, exist_ok=True)
     write_poscar_from_ase(structure, working_directory)
@@ -179,7 +179,7 @@ def _to_engine_output(parsed: dict) -> EngineOutput:
     )
 ```
 
-Caveat: `parse_vasp_output` from `pyiron_vasp` returns a dict-like object; the exact keys above are placeholders that we'll match to whatever it actually yields during implementation. The contract is "map upstream keys to `EngineOutput` field names" — the mapping table goes in the implementation plan, not the spec.
+Caveat: `parse_vasp_output` from `vaspparser` returns a dict-like object; the exact keys above are placeholders that we'll match to whatever it actually yields during implementation. The contract is "map upstream keys to `EngineOutput` field names" — the mapping table goes in the implementation plan, not the spec.
 
 ### Mapping `CalcInput*` → INCAR
 
@@ -227,7 +227,7 @@ A `@pytest.mark.real_vasp` companion marker exercises the same engine against an
 
 ### Numerical-regression gate
 
-Capture the parsed outputs of the canned fixtures into `tests/unit/test_numerical_regression.py` golden values. The fixtures are bytewise stable, so the golden values are immutable as long as `parse_vasp_output` itself doesn't change. If pyiron_vasp ever bumps and the parser output drifts, the test trips immediately.
+Capture the parsed outputs of the canned fixtures into `tests/unit/test_numerical_regression.py` golden values. The fixtures are bytewise stable, so the golden values are immutable as long as `parse_vasp_output` itself doesn't change. If vaspparser ever bumps and the parser output drifts, the test trips immediately.
 
 Beyond fixture-parsing: there is one example script in `example_notebooks/` and a smoke suite under `tests/`. Run both against `main` before this PR opens, record printed values, pin in the regression test.
 
@@ -261,17 +261,17 @@ dependencies = [
     "pyiron_snippets==1.2.1",
     "scikit-learn==1.8.0",
     "tqdm==4.67.3",
-    "pyiron_vasp==0.2.5",
+    "vaspparser==0.0.6",
 ]
 ```
 
-`pyiron_vasp==0.2.5` stays pinned — it's the VASP parse-output dependency, orthogonal to atomistics.
+`vaspparser==0.0.6` stays pinned — it's the VASP parse-output dependency, orthogonal to atomistics.
 
 Add a `[project.optional-dependencies] test = ["pytest", "nbformat", "nbclient"]` matching atomistics.
 
 ## CI footprint
 
-The repo doesn't currently have a `.ci_support/environment.yml` — it relies on pip + pyproject. Add one matching atomistics' shape so the same shared workflows (push-pull, pyproject-release) can run. Conda dependencies as listed in the sweep above; `pip:` for `pyiron-workflow-atomistics`, `pyiron_vasp`, `pyiron_workflow` (whatever isn't on conda-forge). The conformance suite uses fixtures so no real VASP install is needed.
+The repo doesn't currently have a `.ci_support/environment.yml` — it relies on pip + pyproject. Add one matching atomistics' shape so the same shared workflows (push-pull, pyproject-release) can run. Conda dependencies as listed in the sweep above; `pip:` for `pyiron-workflow-atomistics`, `vaspparser`, `pyiron_workflow` (whatever isn't on conda-forge). The conformance suite uses fixtures so no real VASP install is needed.
 
 ## Out of scope
 
@@ -284,7 +284,7 @@ The repo doesn't currently have a `.ci_support/environment.yml` — it relies on
 ## Risk register
 
 1. **`parse_vasp_output` return-shape uncertainty**: the implementation plan must inventory exactly which keys it yields before commit 2 can be merged. If keys are missing (e.g. no `final_stress_voigt`), the `EngineOutput` adapter computes them from raw stress tensor in `_to_engine_output`.
-2. **Mock-command brittleness**: the canned fixtures must contain exactly the files `parse_vasp_output` expects to read. If a future pyiron_vasp version requires new files (e.g. `vaspout.h5`), the conformance suite breaks. Pin `pyiron_vasp==0.2.5` and explicitly bump only with a regenerated fixture set.
+2. **Mock-command brittleness**: the canned fixtures must contain exactly the files `parse_vasp_output` expects to read. If a future vaspparser version requires new files (e.g. `vaspout.h5`), the conformance suite breaks. Pin `vaspparser==0.0.6` and explicitly bump only with a regenerated fixture set.
 3. **Pickle safety of `Path` field**: `pathlib.Path` pickles fine; no concern. Functions / callables are not stored on the engine (only command strings), so the pickle test passes trivially.
 4. **`pyiron_workflow` 0.13.3 → 0.15.6 API drift**: the existing helper functions use `pyiron_workflow.Workflow` directly. Audit during implementation; rename / adjust call sites as needed in commit 2.
 

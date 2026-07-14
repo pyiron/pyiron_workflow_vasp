@@ -39,7 +39,7 @@ dependencies = [
     "scipy==1.17.0",
     "pyiron-workflow==0.15.6",
     "pyiron-workflow-atomistics==0.0.6",
-    "pyiron_vasp==0.2.19",
+    "vaspparser==0.0.6",
     "pymatgen==2026.5.4",
     "pyiron_snippets==1.2.1",
     "scikit-learn==1.8.0",
