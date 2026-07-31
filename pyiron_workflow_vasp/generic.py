@@ -75,31 +75,23 @@ class FileObject:
         return self._path.name
     
 @fr.atomic("output")
-def shell(
+def run_shell(
     command: str,
-    workdir: str | None = None,
-    environment: Optional[dict[str, str]] = None,
-    arguments: Optional[list[str]] = None,
+    workdir: str,
+    environment: dict[str, str] | None = None,
+    arguments: list[str] | None = None,
 ) -> ShellOutput:
+    """Run ``command`` with ``workdir`` as the working directory.
+
+    Deliberately does NOT call os.chdir: subprocess.run's ``cwd`` argument
+    already scopes the child process, and mutating the parent's working
+    directory is unsafe now that pyiron_workflow 0.19 evaluates sibling nodes
+    in a DAG layer on separate threads by default.
     """
-    Run a shell command in the specified working directory.
-    
-    Args:
-        command (str): The command to execute.
-        workdir (str | None, optional): The working directory. Defaults to None.
-        environment (Optional[dict[str, str]], optional): Environment variables to set. Defaults to None.
-        arguments (Optional[list[str]], optional): Command line arguments. Defaults to None.
-    
-    Returns:
-        ShellOutput: Object containing stdout, stderr, and return code.
-    """
-    curr_dir = os.getcwd()
-    os.chdir(workdir)
     if environment is None:
         environment = {}
     if arguments is None:
         arguments = []
-    logger.info(f"shell is in {os.getcwd()}")
     environ = dict(os.environ)
     environ.update({k: str(v) for k, v in environment.items()})
     proc = subprocess.run(
@@ -114,7 +106,6 @@ def shell(
     output.stdout = proc.stdout
     output.stderr = proc.stderr
     output.return_code = proc.returncode
-    os.chdir(curr_dir)
     return output
 
 @fr.atomic("line_found")

@@ -74,3 +74,47 @@ def test_is_line_in_file_substring_match(fake_vasp_dir):
         exact_match=False,
     )
     assert run.outputs.line_found is True
+
+
+import os
+
+from pyiron_workflow_vasp.generic import run_shell
+
+
+def test_run_shell_executes_in_workdir(abs_workdir):
+    run = pwf.node(run_shell).run(command="pwd", workdir=abs_workdir)
+    assert run.outputs.output.return_code == 0
+    assert run.outputs.output.stdout.strip() == abs_workdir
+
+
+def test_run_shell_does_not_mutate_process_cwd(abs_workdir):
+    before = os.getcwd()
+    pwf.node(run_shell).run(command="pwd", workdir=abs_workdir)
+    assert os.getcwd() == before
+
+
+def test_run_shell_captures_failure(abs_workdir):
+    run = pwf.node(run_shell).run(command="exit 3", workdir=abs_workdir)
+    assert run.outputs.output.return_code == 3
+
+
+def test_run_shell_is_concurrency_safe(abs_workdir, tmp_path):
+    """Two shell nodes in one DAG layer must not corrupt each other's cwd.
+
+    This is the regression test for removing os.chdir: with the chdir in
+    place, interleaved execution makes one of the two `pwd` results wrong.
+    """
+    import concurrent.futures
+
+    other = tmp_path / "other"
+    other.mkdir()
+    other_abs = str(other.resolve())
+
+    def run_in(d):
+        return pwf.node(run_shell).run(command="pwd", workdir=d).outputs.output.stdout.strip()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        futures = [ex.submit(run_in, d) for d in (abs_workdir, other_abs) for _ in range(20)]
+        results = {f.result() for f in futures}
+
+    assert results == {abs_workdir, other_abs}
