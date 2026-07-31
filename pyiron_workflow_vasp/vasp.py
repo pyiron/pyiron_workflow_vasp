@@ -233,6 +233,11 @@ def create_working_directory(workdir: str, quiet: bool = False) -> str:
 
 @fr.atomic("workdir")
 def write_vasp_input_set(workdir: str, vasp_input: VaspInput) -> str:
+    # write_POSCAR/write_POTCAR (unchanged helpers) expect an ase.Atoms, matching
+    # VaspInput's type hint; normalize a pymatgen Structure here at the call site
+    # rather than inside those helpers.
+    if isinstance(vasp_input.structure, Structure):
+        vasp_input.structure = AseAtomsAdaptor.get_atoms(vasp_input.structure)
     write_POSCAR(workdir=workdir, structure=vasp_input.structure)
     write_INCAR(workdir=workdir, incar=vasp_input.incar)
     write_POTCAR(workdir=workdir, vasp_input=vasp_input)
@@ -279,64 +284,40 @@ def check_convergence(
     return False
 
 
-@Workflow.wrap.as_macro_node("vasp_output", "convergence_status")
+@fr.workflow("vasp_output", "convergence_status")
 def vasp_job(
-    self,
     workdir: str,
     vasp_input: VaspInput,
-    command: str = "module load vasp; module load intel/19.1.0 impi/2019.6; unset I_MPI_HYDRA_BOOTSTRAP; unset I_MPI_PMI_LIBRARY; mpiexec -n 1 vasp_std",
-    files_to_be_deleted = ["CHG", "CHGCAR", "WAVECAR"],
-    compress = False,
-    compressed_file_in_dir = False,
-    remove_calc_dir = False,
-    vasp_parser_function = None,
-    vasp_parser_args: dict = {},
+    command: str = "mpiexec -n 1 vasp_std",
+    files_to_be_deleted: list[str] | None = None,
+    compress: bool = False,
+    compressed_file_in_dir: bool = False,
+    remove_calc_dir: bool = False,
+    vasp_parser_function=None,
+    vasp_parser_args: dict | None = None,
 ):
-    """
-    Run a VASP calculation with the specified input parameters.
-    
-    Args:
-        self: The workflow instance.
-        workdir (str): Path to the working directory.
-        vasp_input (VaspInput): VASP input object containing structure, INCAR, and POTCAR information.
-        command (str, optional): Command to run VASP. Defaults to a specific module loading command.
-        files_to_be_deleted (list[str], optional): List of files to delete after the calculation. 
-                                                  Defaults to ["CHG", "CHGCAR", "WAVECAR"].
-        compress (bool, optional): Whether to compress the output directory. Defaults to False.
-        compressed_file_in_dir (bool, optional): Whether to place the compressed file in the output directory. 
-                                                Defaults to False.
-        remove_calc_dir (bool, optional): Whether to remove the calculation directory after compression. 
-                                         Defaults to False.
-        vasp_parser_function (callable, optional): Function to parse VASP output. This should be a regular Python function
-                                                 that takes a workdir parameter and returns parsed output. If None, the
-                                                 default parse_VaspOutput function will be used.
-        vasp_parser_args (dict, optional): Additional arguments to pass to the vasp_parser_function. Defaults to {}.
-    
-    Returns:
-        tuple: (vasp_output, convergence_status)
-    """
-    self.working_dir = create_WorkingDirectory(workdir=workdir)
-    self.vaspwriter = write_VaspInputSet(workdir=workdir, vasp_input=vasp_input)
-    self.job = shell(command=command, workdir=workdir)
-    self.vasp_output = parse_VaspOutput(workdir=workdir, function=vasp_parser_function, parser_args=vasp_parser_args)
-    self.convergence_status = check_convergence(workdir=workdir)
-    self.cleanup = delete_files_recursively(workdir=workdir, files_to_be_deleted=files_to_be_deleted)
-    self.compress_operation = compress_directory(directory_path=workdir, actually_compress=compress, inside_dir=compressed_file_in_dir)
-    self.remove_dir = remove_dir(directory_path=workdir, actually_remove=remove_calc_dir)
-    (
-        self.working_dir
-        >> self.vaspwriter
-        >> self.job
-        >> self.vasp_output
-        >> self.convergence_status
-        >> self.cleanup
-        >> self.compress_operation
-        >> self.remove_dir
-    )
-    # This looks weird but it's mandatory for the signals!
-    self.starting_nodes = [self.working_dir]
+    """Run one VASP calculation and return its parsed output and convergence.
 
-    return self.vasp_output, self.convergence_status
+    pyiron_workflow 0.19 removed execution signals, so the ordering that the
+    0.11 macro expressed with ``>>`` is rebuilt here as data dependencies. The
+    ``after=`` arguments are ordering tokens that are never read by the
+    receiving node; they exist only to create the edge.
+    """
+    wd_created = create_working_directory(workdir)
+    wd_written = write_vasp_input_set(wd_created, vasp_input)
+    shell_result = run_shell(command, wd_written)
+    raw_output = parse_vasp_output(
+        wd_written, vasp_parser_function, vasp_parser_args, after=shell_result
+    )
+    convergence = check_convergence(wd_written, after=shell_result)
+    wd_cleaned = delete_files_recursively(
+        wd_written, files_to_be_deleted, after=raw_output
+    )
+    wd_archived = compress_directory(
+        wd_cleaned, compress, compressed_file_in_dir, after=convergence
+    )
+    vasp_output = remove_directory(wd_archived, remove_calc_dir, raw_output)
+    return vasp_output, convergence
 
 
 def stack_element_string(structure) -> tuple[list[str], list[int]]:
