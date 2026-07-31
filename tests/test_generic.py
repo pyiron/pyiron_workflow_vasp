@@ -98,26 +98,61 @@ def test_run_shell_captures_failure(abs_workdir):
     assert run.outputs.output.return_code == 3
 
 
-def test_run_shell_is_concurrency_safe(abs_workdir, tmp_path):
-    """Two shell nodes in one DAG layer must not corrupt each other's cwd.
+def test_run_shell_concurrent_calls_preserve_process_cwd(tmp_path):
+    """Regression test for the removed ``os.chdir`` race in ``run_shell``.
 
-    This is the regression test for removing os.chdir: with the chdir in
-    place, interleaved execution makes one of the two `pwd` results wrong.
+    The old body did::
+
+        curr_dir = os.getcwd()
+        os.chdir(workdir)
+        ...
+        os.chdir(curr_dir)
+
+    Under concurrent execution this save/restore pair races: thread B can
+    call ``os.getcwd()`` for its own "curr_dir" bookkeeping *after* thread A
+    has already ``chdir``'d to thread A's workdir, so thread B captures
+    thread A's workdir as "the directory to restore to" and later leaves the
+    *process* working directory pointed at the wrong place once all calls
+    finish.
+
+    Asserting on subprocess ``pwd`` stdout does NOT catch this: the child
+    process's directory is scoped directly by ``subprocess.run(cwd=...)``,
+    independent of the parent's ``os.getcwd()`` state, so every child always
+    reports the directory it was launched with regardless of any parent-side
+    chdir race. Only checking ``os.getcwd()`` of the calling process itself,
+    after many concurrent calls have interleaved, can observe the corruption.
+
+    The CWD is restored in a ``finally`` block so a failure here can't poison
+    the working directory for the rest of the test session.
     """
     import concurrent.futures
 
-    other = tmp_path / "other"
-    other.mkdir()
-    other_abs = str(other.resolve())
+    workdirs = []
+    for i in range(4):
+        d = tmp_path / f"work_{i}"
+        d.mkdir()
+        workdirs.append(str(d.resolve()))
 
-    def run_in(d):
-        return pwf.node(run_shell).run(command="pwd", workdir=d).outputs.output.stdout.strip()
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        futures = [ex.submit(run_in, d) for d in (abs_workdir, other_abs) for _ in range(20)]
-        results = {f.result() for f in futures}
-
-    assert results == {abs_workdir, other_abs}
+    original_cwd = os.getcwd()
+    try:
+        for trial in range(5):
+            targets = [workdirs[i % len(workdirs)] for i in range(24)]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+                futures = [
+                    ex.submit(
+                        lambda d: pwf.node(run_shell).run(command="pwd", workdir=d),
+                        d,
+                    )
+                    for d in targets
+                ]
+                for f in futures:
+                    f.result()
+            assert os.getcwd() == original_cwd, (
+                f"trial {trial}: process cwd corrupted to {os.getcwd()!r}, "
+                f"expected {original_cwd!r}"
+            )
+    finally:
+        os.chdir(original_cwd)
 
 
 def test_submit_to_slurm_is_gone():
