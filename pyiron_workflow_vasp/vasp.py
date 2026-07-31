@@ -14,13 +14,17 @@ from pymatgen.io.vasp.inputs import Incar, Kpoints
 from pymatgen.io.vasp.outputs import Vasprun
 from pymatgen.io.ase import AseAtomsAdaptor
 
-from pyiron_vasp.vasp.output import parse_vasp_output as pyiron_atomistics_pvo
-
 from ase import Atoms
 
-from pyiron_workflow import Workflow
+import flowrep as fr
 
-from pyiron_workflow_vasp.generic import delete_files_recursively, compress_directory, remove_dir, shell, isLineInFile
+from pyiron_workflow_vasp.generic import (
+    compress_directory,
+    delete_files_recursively,
+    is_line_in_file,
+    remove_directory,
+    run_shell,
+)
 
 from pyiron_snippets.logger import logger
 
@@ -214,115 +218,65 @@ def write_KPOINTS(
     return kpoint_path
 
 
-@Workflow.wrap.as_function_node("workdir")
-def create_WorkingDirectory(workdir: str, quiet: bool = False) -> str:
-    """
-    Create a working directory if it doesn't exist.
-    
-    Args:
-        workdir (str): Path to the directory to create.
-        quiet (bool, optional): If True, suppress warnings. Defaults to False.
-    
-    Returns:
-        str: Path to the created or existing directory.
-    """
-    # Check if workdir exists
+@fr.atomic("workdir")
+def create_working_directory(workdir: str, quiet: bool = False) -> str:
+    """Create ``workdir`` if absent. Must be given an absolute path."""
     if not os.path.exists(workdir):
         os.makedirs(workdir)
         logger.info(f"made directory '{workdir}'")
-    else:
+    elif not quiet:
         warnings.warn(
             f"Directory '{workdir}' already exists. Existing files may be overwritten."
         )
     return workdir
 
 
-@Workflow.wrap.as_function_node("workdir")
-def write_VaspInputSet(workdir: str, vasp_input: VaspInput) -> str:
-    """
-    Write VASP input files to the working directory.
-    
-    Args:
-        workdir (str): Path to the working directory.
-        vasp_input (VaspInput): VASP input object containing structure, INCAR, and POTCAR information.
-    
-    Returns:
-        str: Path to the working directory.
-    """
-    _ = write_POSCAR(workdir=workdir, structure=vasp_input.structure)
-    _ = write_INCAR(workdir=workdir, incar=vasp_input.incar)
-    _ = write_POTCAR(workdir=workdir, vasp_input=vasp_input)
+@fr.atomic("workdir")
+def write_vasp_input_set(workdir: str, vasp_input: VaspInput) -> str:
+    write_POSCAR(workdir=workdir, structure=vasp_input.structure)
+    write_INCAR(workdir=workdir, incar=vasp_input.incar)
+    write_POTCAR(workdir=workdir, vasp_input=vasp_input)
     if vasp_input.kpoints is not None:
-        _ = write_KPOINTS(workdir=workdir, kpoints=vasp_input.kpoints)
-
+        write_KPOINTS(workdir=workdir, kpoints=vasp_input.kpoints)
     return workdir
 
 
-@Workflow.wrap.as_function_node("output_dict")
-def parse_VaspOutput(workdir, function = None, parser_args = {}):
-    """
-    Parse VASP output files in the working directory.
-    
-    Args:
-        workdir (str): Path to the working directory containing VASP output files.
-    
-    Returns:
-        dict: Dictionary containing parsed VASP output data.
-    """
-    if function == None:
-        #from pyiron_workflow_vasp.vasp_parser.output import parse_vasp_directory
-        from pyiron_vasp.vasp.output import parse_vasp_output as parse_vasp_directory
-        parser_args = {"working_directory": workdir}
-    else:
-        parse_vasp_directory = function
-    return parse_vasp_directory(**parser_args)
+@fr.atomic("output_dict")
+def parse_vasp_output(
+    workdir: str,
+    function=None,
+    parser_args: dict | None = None,
+    after: object = None,
+) -> dict:
+    """Parse VASP output. ``after`` is an ordering token; see generic.py."""
+    if function is None:
+        from pyiron_workflow_vasp.vasp_parser.output import parse_vasp_directory
+
+        return parse_vasp_directory(workdir)
+    return function(**(parser_args or {}))
 
 
-@Workflow.wrap.as_function_node("convergence")
+@fr.atomic("convergence")
 def check_convergence(
     workdir: str,
     filename_vasprun: str = "vasprun.xml",
     filename_vasplog: str = "vasp.log",
     backup_vasplog: str = "error.out",
+    after: object = None,
 ) -> bool:
-    """
-    Check if a VASP calculation has converged.
-    
-    Args:
-        workdir (str): Path to the working directory.
-        filename_vasprun (str, optional): Name of the vasprun.xml file. Defaults to "vasprun.xml".
-        filename_vasplog (str, optional): Name of the VASP log file. Defaults to "vasp.log".
-        backup_vasplog (str, optional): Name of the backup log file. Defaults to "error.out".
-    
-    Returns:
-        bool: True if the calculation has converged, False otherwise.
-    """
-    converged = False
-    line_converged = (
-        "reached required accuracy - stopping structural energy minimisation"
-    )
-
+    """Report whether the calculation reached ionic convergence."""
+    line_converged = "reached required accuracy - stopping structural energy minimisation"
     try:
-        vr = Vasprun(filename=os.path.join(workdir, filename_vasprun))
-        converged = vr.converged
-    except:
-        try:
-            converged = isLineInFile.node_function(
-                filepath=os.path.join(workdir, filename_vasplog),
-                line=line_converged,
-                exact_match=False,
-            )
-        except:
-            try:
-                converged = isLineInFile.node_function(
-                    filepath=os.path.join(workdir, backup_vasplog),
-                    line=line_converged,
-                    exact_match=False,
-                )
-            except:
-                pass
-
-    return converged
+        return bool(Vasprun(filename=os.path.join(workdir, filename_vasprun)).converged)
+    except Exception:
+        pass
+    for candidate in (filename_vasplog, backup_vasplog):
+        path = os.path.join(workdir, candidate)
+        if os.path.isfile(path):
+            with open(path) as handle:
+                if any(line_converged in line for line in handle):
+                    return True
+    return False
 
 
 @Workflow.wrap.as_macro_node("vasp_output", "convergence_status")
