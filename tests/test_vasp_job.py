@@ -81,11 +81,78 @@ def test_vasp_job_removes_calc_dir_but_returns_output(
     assert not os.path.exists(workdir), "directory should have been removed"
 
 
+def _ancestors(edges, target_label):
+    """Transitive ancestors of ``target_label`` in a flowrep node's ``.edges``.
+
+    Each edge's ``.source``/``.target`` exposes a ``.node`` attribute that is
+    ``None`` for graph-level inputs/outputs and a child label otherwise; only
+    node-to-node edges matter for dependency ordering.
+    """
+    parents: dict[str, set[str]] = {}
+    for edge in edges:
+        src_node = edge.source.node
+        dst_node = edge.target.node
+        if src_node is None or dst_node is None:
+            continue
+        parents.setdefault(dst_node, set()).add(src_node)
+
+    seen: set[str] = set()
+    stack = list(parents.get(target_label, ()))
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        stack.extend(parents.get(current, ()))
+    return seen
+
+
 def test_vasp_job_graph_orders_removal_after_convergence(fe_structure):
-    """Structural check: the node that removes the directory must be
-    downstream of the node that reads convergence, otherwise the check could
-    race the deletion."""
+    """Structural check: remove_directory_0 must be a transitive descendant
+    of check_convergence_0 -- i.e. check_convergence_0 must be a real
+    ancestor of remove_directory_0 in the built graph's edges, not just a
+    node that happens to exist somewhere in the same graph. Without this,
+    the calc directory could be compressed/removed before convergence is
+    ever read.
+
+    A prior version of this test only checked that both labels appeared in
+    ``node.nodes.keys()``, which is true regardless of edges and stays true
+    even if the ``after=convergence`` argument is deleted from
+    ``compress_directory(...)`` in vasp_job -- i.e. it could not detect the
+    exact race it was written to prevent. This version was mutation-tested
+    against that deletion (see task-6-8-report.md) and fails when the edge
+    is removed.
+    """
     node = pwf.node(vasp_job)
-    child_labels = list(node.nodes.keys())
-    assert any("check_convergence" in label for label in child_labels)
-    assert any("remove_directory" in label for label in child_labels)
+    ancestors = _ancestors(node.edges, "remove_directory_0")
+    assert "check_convergence_0" in ancestors
+
+
+def test_vasp_job_runs_without_files_to_be_deleted_argument(
+    tmp_path, fe_structure, stub_vasp_command
+):
+    """files_to_be_deleted defaults to None in vasp_job's signature, and
+    delete_files_recursively must tolerate that (treat it as "delete
+    nothing") rather than raising TypeError from `file in None`."""
+    workdir = str((tmp_path / "calc3").resolve())
+    incar = Incar.from_dict({"ENCUT": 300, "NSW": 0})
+
+    def fake_parser(directory):
+        return {"energy": -3.21}
+
+    run = pwf.node(vasp_job).run(
+        workdir=workdir,
+        vasp_input=VaspInput(structure=fe_structure, incar=incar, potcar_paths=None),
+        command=stub_vasp_command,
+        compress=False,
+        compressed_file_in_dir=False,
+        remove_calc_dir=False,
+        vasp_parser_function=fake_parser,
+        vasp_parser_args={"directory": workdir},
+    )
+
+    assert run.status == "finished"
+    assert run.outputs.vasp_output["energy"] == -3.21
+    assert os.path.exists(os.path.join(workdir, "CHGCAR")), (
+        "with no files_to_be_deleted, nothing should have been cleaned up"
+    )

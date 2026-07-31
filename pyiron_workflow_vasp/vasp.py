@@ -21,7 +21,6 @@ import flowrep as fr
 from pyiron_workflow_vasp.generic import (
     compress_directory,
     delete_files_recursively,
-    is_line_in_file,
     remove_directory,
     run_shell,
 )
@@ -154,6 +153,15 @@ class VaspInput:
           useful when custom/non-default potentials are required for specific elements.
         - When potcar_paths is used, the class does not validate that the provided POTCAR files match the elements in the structure,
           so incorrect configurations may lead to invalid calculations.
+        - ``structure`` may be given as either an ``ase.Atoms`` or a ``pymatgen.core.Structure``; ``__post_init__``
+          normalizes a pymatgen ``Structure`` to ``ase.Atoms`` once, at construction, since the file-writing helpers
+          (``write_POSCAR``, ``get_default_POTCAR_paths``) only understand ``ase.Atoms``. The normalization never
+          mutates the object the caller passed in.
+        - **Per-site magnetic moments are NOT propagated to the INCAR.** If ``structure`` carries
+          ``site_properties={"magmom": ...}`` (pymatgen) or per-atom initial magnetic moments (ase), those are
+          silently dropped -- neither the ase nor the pymatgen write path ever wrote a MAGMOM tag from the
+          structure. Set MAGMOM explicitly as an INCAR string (e.g. ``"3*2.5 1*-2.5"``) if the calculation needs it;
+          this is the contract downstream ASSYST campaigns already rely on.
     """
 
     structure: Atoms
@@ -164,6 +172,16 @@ class VaspInput:
     kpoints: Optional[Kpoints] = None
     # generic_input: GenericDFTInput
 #    spin_constraints: []
+
+    def __post_init__(self):
+        # Normalize once, at construction, so every producer of a VaspInput
+        # (generate_vasp_input, construct_sequential_vasp_input, or direct
+        # construction by a caller/test) ends up with an ase.Atoms structure
+        # regardless of what representation it was handed. This never
+        # mutates the caller's original object -- AseAtomsAdaptor.get_atoms
+        # returns a new object; self.structure is simply rebound.
+        if isinstance(self.structure, Structure):
+            self.structure = AseAtomsAdaptor.get_atoms(self.structure)
 
 # def GenericDFTInput:
 #     spin_constraints=[]
@@ -233,11 +251,8 @@ def create_working_directory(workdir: str, quiet: bool = False) -> str:
 
 @fr.atomic("workdir")
 def write_vasp_input_set(workdir: str, vasp_input: VaspInput) -> str:
-    # write_POSCAR/write_POTCAR (unchanged helpers) expect an ase.Atoms, matching
-    # VaspInput's type hint; normalize a pymatgen Structure here at the call site
-    # rather than inside those helpers.
-    if isinstance(vasp_input.structure, Structure):
-        vasp_input.structure = AseAtomsAdaptor.get_atoms(vasp_input.structure)
+    # vasp_input.structure is already an ase.Atoms here: VaspInput.__post_init__
+    # normalizes a pymatgen Structure once, at construction, for every producer.
     write_POSCAR(workdir=workdir, structure=vasp_input.structure)
     write_INCAR(workdir=workdir, incar=vasp_input.incar)
     write_POTCAR(workdir=workdir, vasp_input=vasp_input)
@@ -252,8 +267,14 @@ def parse_vasp_output(
     function=None,
     parser_args: dict | None = None,
     after: object = None,
-) -> dict:
-    """Parse VASP output. ``after`` is an ordering token; see generic.py."""
+) -> dict | pd.DataFrame:
+    """Parse VASP output. ``after`` is an ordering token; see generic.py.
+
+    Returns whatever ``function`` returns when supplied. The default parser
+    (``vasp_parser.output.parse_vasp_directory``) returns a ``pandas.DataFrame``,
+    not a ``dict`` -- despite the ``"output_dict"`` port name, which predates
+    this port and is kept for compatibility with existing callers/tests.
+    """
     if function is None:
         from pyiron_workflow_vasp.vasp_parser.output import parse_vasp_directory
 
@@ -381,8 +402,24 @@ def generate_vasp_input(structure, incar: Incar, potcar_paths=None) -> VaspInput
 
 @fr.atomic("vasp_input")
 def construct_sequential_vasp_input(
-    vasp_output: dict, incar: Incar, potcar_paths=None
+    vasp_output: pd.DataFrame, incar: Incar, potcar_paths=None
 ) -> VaspInput:
-    """Build the next VaspInput from the final structure of a previous run."""
-    structure = vasp_output["structures"][-1]
+    """Build the next VaspInput from the final structure of a previous run.
+
+    ``vasp_output`` is the DataFrame produced by ``parse_vasp_output`` (see
+    ``vasp_parser/output.py``): its ``structures`` column holds, per row, an
+    array of ``Structure.to_json()`` strings, one per ionic step -- NOT
+    structure objects. ``vasp_output.structures.iloc[0][-1]`` is therefore
+    the JSON string for the last ionic step of the (single) parsed row, and
+    must be round-tripped back through ``Structure.from_str(..., fmt="json")``
+    before it is usable. ``VaspInput.__post_init__`` then normalizes that
+    pymatgen Structure to ase.Atoms, same as every other VaspInput producer.
+    """
+    # str(...): parse_vasp_directory stores the per-step JSON strings in a
+    # numpy array, so indexing it back out yields numpy.str_ rather than a
+    # plain str. pymatgen's JSON reader (orjson) rejects numpy.str_ even
+    # though it is a str subclass, so it must be coerced explicitly.
+    structure = Structure.from_str(
+        str(vasp_output.structures.iloc[0][-1]), fmt="json"
+    )
     return VaspInput(structure=structure, incar=incar, potcar_paths=potcar_paths)

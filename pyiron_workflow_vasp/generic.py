@@ -126,14 +126,19 @@ def is_line_in_file(filepath: str, line: str, exact_match: bool = True) -> bool:
 
 @fr.atomic("workdir")
 def delete_files_recursively(
-    workdir: str, files_to_be_deleted: list[str], after: object = None
+    workdir: str, files_to_be_deleted: list[str] | None = None, after: object = None
 ) -> str:
     """Recursively delete named files under ``workdir``.
+
+    ``files_to_be_deleted=None`` is treated as an empty list (nothing to
+    delete) rather than raising, since callers such as ``vasp_job`` may pass
+    ``None`` through explicitly.
 
     ``after`` is an ordering token: it is never read, but accepting it lets a
     caller create a data edge that forces this node to run after another.
     0.19 has no execution signals, so ordering must come from data flow.
     """
+    files_to_be_deleted = files_to_be_deleted or []
     if not os.path.isdir(workdir):
         logger.info(f"Error: {workdir} is not a valid directory.")
     else:
