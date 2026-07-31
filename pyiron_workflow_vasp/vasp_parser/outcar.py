@@ -237,7 +237,7 @@ class Outcar(object):
                 return datetime_obj
 
     def get_positions_and_forces(self, filename="OUTCAR", lines=None, n_atoms=None):
-        """
+        r"""
         Gets the forces and positions for every ionic step from the OUTCAR file
 
         Args:
@@ -266,7 +266,7 @@ class Outcar(object):
         )
 
     def get_positions(self, filename="OUTCAR", lines=None, n_atoms=None):
-        """
+        r"""
         Gets the positions for every ionic step from the OUTCAR file
 
         Args:
@@ -293,7 +293,7 @@ class Outcar(object):
         )
 
     def get_forces(self, filename="OUTCAR", lines=None, n_atoms=None):
-        """
+        r"""
         Gets the forces for every ionic step from the OUTCAR file
 
         Args:
@@ -321,7 +321,7 @@ class Outcar(object):
         )
 
     def get_cells(self, filename="OUTCAR", lines=None):
-        """
+        r"""
         Gets the cell size and shape for every ionic step from the OUTCAR file
 
         Args:
@@ -1086,7 +1086,7 @@ class Outcar(object):
     def _get_positions_and_forces_parser(
         lines, trigger_indices, n_atoms, pos_flag=True, force_flag=True
     ):
-        """
+        r"""
         Parser to get the forces and or positions for every ionic step from the OUTCAR file
 
         Args:
@@ -1127,7 +1127,7 @@ class Outcar(object):
 
     @staticmethod
     def _get_cells_praser(lines, trigger_indices):
-        """
+        r"""
         Parser to get the cell size and shape for every ionic step from the OUTCAR file
 
         Args:

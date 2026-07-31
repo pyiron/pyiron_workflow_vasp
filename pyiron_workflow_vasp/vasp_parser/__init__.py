@@ -1,8 +1,10 @@
-"""
-VASP parser module for pyiron_workflow_vasp
+"""VASP parser module for pyiron_workflow_vasp.
+
+Deliberately free of any pyiron_workflow import so it can be used from any
+workflow-engine version, or standalone.
 """
 
-from .output import *
-from .outcar import *
+from .outcar import Outcar
+from .output import parse_vasp_directory
 
-__all__ = ["VaspParser", "parse_vasp_directory"] 
+__all__ = ["Outcar", "parse_vasp_directory"]
