@@ -56,3 +56,29 @@ def test_parse_vasp_output_after_token_does_not_change_result(abs_workdir):
         after="ignored-ordering-token",
     )
     assert run.outputs.output_dict["directory"] == abs_workdir
+
+
+from pymatgen.io.vasp.inputs import Incar
+
+import pyiron_workflow_vasp.vasp as vasp_mod
+from pyiron_workflow_vasp.vasp import generate_modified_incar
+
+
+def test_generate_modified_incar_overrides_tag():
+    base = Incar.from_dict({"ENCUT": 400, "ISIF": 3, "NSW": 100})
+    run = pwf.node(generate_modified_incar).run(
+        incar=base, modifications={"ISIF": 7}
+    )
+    assert run.outputs.incar["ISIF"] == 7
+    assert run.outputs.incar["ENCUT"] == 400
+
+
+def test_generate_modified_incar_does_not_mutate_input():
+    base = Incar.from_dict({"ENCUT": 400, "ISIF": 3})
+    pwf.node(generate_modified_incar).run(incar=base, modifications={"ISIF": 7})
+    assert base["ISIF"] == 3, "the source INCAR must be left untouched"
+
+
+def test_get_multiple_input_is_gone():
+    """ForEach broadcasts non-iterated inputs, so this helper is obsolete."""
+    assert not hasattr(vasp_mod, "get_multiple_input")
