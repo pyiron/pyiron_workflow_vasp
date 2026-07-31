@@ -331,6 +331,16 @@ def vasp_job(
         wd_written, vasp_parser_function, vasp_parser_args, after=shell_result
     )
     convergence = check_convergence(wd_written, after=shell_result)
+    # NOTE: there is no explicit data edge from `convergence` into
+    # delete_files_recursively below (it is ordered after `raw_output` /
+    # parse_vasp_output instead, not after check_convergence). That is safe
+    # ONLY because 0.19's DAG-layer barrier places delete_files_recursively
+    # in a layer after check_convergence has already run, so convergence is
+    # always read before any deletion happens -- this is a dependency on
+    # executor/layering semantics, not on a data edge. If a future edit
+    # changes the execution model (e.g. separate executors without a shared
+    # layer barrier) this ordering guarantee disappears silently; add an
+    # explicit `after=convergence` edge if that assumption is ever relaxed.
     wd_cleaned = delete_files_recursively(
         wd_written, files_to_be_deleted, after=raw_output
     )
@@ -404,22 +414,34 @@ def generate_vasp_input(structure, incar: Incar, potcar_paths=None) -> VaspInput
 def construct_sequential_vasp_input(
     vasp_output: pd.DataFrame, incar: Incar, potcar_paths=None
 ) -> VaspInput:
-    """Build the next VaspInput from the final structure of a previous run.
+    """Takes the most recent calculation in the directory and its final
+    ionic step, and builds the next VaspInput from it.
 
     ``vasp_output`` is the DataFrame produced by ``parse_vasp_output`` (see
-    ``vasp_parser/output.py``): its ``structures`` column holds, per row, an
-    array of ``Structure.to_json()`` strings, one per ionic step -- NOT
-    structure objects. ``vasp_output.structures.iloc[0][-1]`` is therefore
-    the JSON string for the last ionic step of the (single) parsed row, and
-    must be round-tripped back through ``Structure.from_str(..., fmt="json")``
-    before it is usable. ``VaspInput.__post_init__`` then normalizes that
-    pymatgen Structure to ase.Atoms, same as every other VaspInput producer.
+    ``vasp_parser/output.py``, ``parse_vasp_directory``): one row per
+    OUTCAR* found plus one row per error archive, sorted ASCENDING by
+    ``calc_start_time``. Its ``structures`` column holds, per row, an array
+    of ``Structure.to_json()`` strings, one per ionic step -- NOT structure
+    objects.
+
+    ``.iloc[-1]`` selects the LAST row, i.e. the most recent calculation,
+    not ``.iloc[0]`` (the oldest/earliest). This matters whenever a
+    directory holds more than one row -- e.g. a custodian restart or an
+    error archive -- such as ASSYST's ISIF7 -> ISIF5 -> ISIF2 chains run
+    with max_errors>0: picking the oldest row would feed the
+    crashed/earliest attempt's structure into the next stage instead of
+    continuing from where the calculation actually left off.
+    ``vasp_output.structures.iloc[-1][-1]`` is therefore the JSON string for
+    the last ionic step of the most recent row, and must be round-tripped
+    back through ``Structure.from_str(..., fmt="json")`` before it is
+    usable. ``VaspInput.__post_init__`` then normalizes that pymatgen
+    Structure to ase.Atoms, same as every other VaspInput producer.
     """
     # str(...): parse_vasp_directory stores the per-step JSON strings in a
     # numpy array, so indexing it back out yields numpy.str_ rather than a
     # plain str. pymatgen's JSON reader (orjson) rejects numpy.str_ even
     # though it is a str subclass, so it must be coerced explicitly.
     structure = Structure.from_str(
-        str(vasp_output.structures.iloc[0][-1]), fmt="json"
+        str(vasp_output.structures.iloc[-1][-1]), fmt="json"
     )
     return VaspInput(structure=structure, incar=incar, potcar_paths=potcar_paths)

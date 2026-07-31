@@ -102,12 +102,34 @@ def test_generate_vasp_input_normalizes_pymatgen_structure_without_mutating_it()
     source = Structure(Lattice.cubic(2.83), ["Fe"], [[0.0, 0.0, 0.0]])
     incar = Incar.from_dict({"ENCUT": 300})
 
+    # Capture real, comparable values BEFORE the call -- these are what can
+    # actually change if __post_init__ mutates the caller's object in place
+    # (e.g. via scale_lattice), unlike a bare `isinstance(source, Structure)`
+    # check, which stays true regardless of whether `source` was mutated
+    # (only rebinding the local, which nothing in the call path can do,
+    # would make it false).
+    original_volume = source.volume
+    original_abc = source.lattice.abc
+    original_num_sites = len(source)
+
     run = pwf.node(generate_vasp_input).run(
         structure=source, incar=incar, potcar_paths=None
     )
 
     assert isinstance(run.outputs.vasp_input.structure, AseAtoms)
-    assert isinstance(source, Structure), "the caller's pymatgen Structure must survive unchanged"
+    assert source.volume == pytest.approx(original_volume), (
+        "the caller's pymatgen Structure must survive unchanged (volume changed)"
+    )
+    assert source.lattice.abc == pytest.approx(original_abc), (
+        "the caller's pymatgen Structure must survive unchanged (lattice changed)"
+    )
+    assert len(source) == original_num_sites, (
+        "the caller's pymatgen Structure must survive unchanged (site count changed)"
+    )
+    assert run.outputs.vasp_input.structure is not source, (
+        "normalization must produce a new ase.Atoms object, not alias the "
+        "caller's pymatgen Structure"
+    )
 
 
 def test_generate_vasp_input_leaves_ase_atoms_as_is():
@@ -145,4 +167,48 @@ def test_construct_sequential_vasp_input_round_trips_last_structure():
     assert len(result_structure) == 1
     assert result_structure.cell.cellpar()[0] == pytest.approx(3.5), (
         "must pick up the LAST ionic step (3.5 A), not the first (4.0 A)"
+    )
+
+
+def test_construct_sequential_vasp_input_uses_most_recent_row_not_oldest():
+    """parse_vasp_directory returns one row per OUTCAR* plus one row per
+    error archive, sorted ASCENDING by calc_start_time -- so a directory
+    with a custodian restart or an error archive present yields MORE THAN
+    ONE row. construct_sequential_vasp_input must continue from the most
+    recent calculation (the last row after the ascending sort), not the
+    oldest: picking the oldest would feed a crashed/earlier attempt's
+    structure into the next stage of e.g. an ISIF7 -> ISIF5 -> ISIF2 chain
+    run under custodian with max_errors>0."""
+    older_first_step = Structure(Lattice.cubic(4.0), ["Ni"], [[0.0, 0.0, 0.0]])
+    older_last_step = Structure(Lattice.cubic(3.9), ["Ni"], [[0.0, 0.0, 0.0]])
+    newer_first_step = Structure(Lattice.cubic(3.6), ["Ni"], [[0.0, 0.0, 0.0]])
+    newer_last_step = Structure(Lattice.cubic(3.5), ["Ni"], [[0.0, 0.0, 0.0]])
+
+    fake_vasp_output = pd.DataFrame(
+        [
+            {
+                "calc_start_time": pd.Timestamp("2026-01-01T00:00:00"),
+                "structures": np.array(
+                    [older_first_step.to_json(), older_last_step.to_json()]
+                ),
+            },
+            {
+                "calc_start_time": pd.Timestamp("2026-01-02T00:00:00"),
+                "structures": np.array(
+                    [newer_first_step.to_json(), newer_last_step.to_json()]
+                ),
+            },
+        ]
+    )
+    incar = Incar.from_dict({"ENCUT": 300})
+
+    run = pwf.node(construct_sequential_vasp_input).run(
+        vasp_output=fake_vasp_output, incar=incar, potcar_paths=None
+    )
+
+    result_structure = run.outputs.vasp_input.structure
+    assert result_structure.cell.cellpar()[0] == pytest.approx(3.5), (
+        "must pick up the last ionic step (3.5 A) of the NEWER row (later "
+        "calc_start_time), not the older row's last step (3.9 A) or either "
+        "row's first step (3.6/4.0 A)"
     )
