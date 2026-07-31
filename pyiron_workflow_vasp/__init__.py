@@ -1,8 +1,8 @@
-"""
-pyiron_workflow_vasp - A VASP workflow integration package for pyiron
+"""pyiron_workflow_vasp — VASP nodes and parsers for pyiron_workflow.
+
+Intentionally empty during the 0.19 port: eager star-imports of `vasp` would
+break submodule imports while that module is mid-migration. Task 9 restores
+the explicit public surface.
 """
 
-from .vasp import *
-from .generic import *
-
-__version__ = "0.1.0" 
+__version__ = "0.2.0.dev0"
