@@ -40,7 +40,7 @@ class Outcar(object):
             filename (str): Filename of the OUTCAR file to parse
 
         """
-        with zopen(filename, "r") as f:
+        with zopen(filename, "rt", encoding="utf-8") as f:
             lines = f.readlines()
         energies = self.get_total_energies(filename=filename, lines=lines)
         energies_int = self.get_energy_without_entropy(filename=filename, lines=lines)

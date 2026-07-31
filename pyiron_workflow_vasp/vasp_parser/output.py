@@ -66,7 +66,11 @@ def check_convergence(
     try:
         vr = Vasprun(filename=os.path.join(directory, filename_vasprun))
         return vr.converged
-    except:
+    except Exception as e:
+        warnings.warn(
+            f"convergence: failed to parse {filename_vasprun!r} ({e!r}); "
+            "falling back to log-file marker search."
+        )
         line_converged = (
             "reached required accuracy - stopping structural energy minimisation"
         )
@@ -76,14 +80,22 @@ def check_convergence(
                 line=line_converged,
                 exact_match=False,
             )
-        except:
+        except Exception as e:
+            warnings.warn(
+                f"convergence: failed to search {filename_vasplog!r} ({e!r}); "
+                f"falling back to {backup_vasplog!r}."
+            )
             try:
                 return is_line_in_file(
                     os.path.join(directory, backup_vasplog),
                     line=line_converged,
                     exact_match=False,
                 )
-            except:
+            except Exception as e:
+                warnings.warn(
+                    f"convergence: failed to search {backup_vasplog!r} ({e!r}); "
+                    "returning False."
+                )
                 return False
 
 
@@ -296,7 +308,8 @@ def process_outcar(outcar, structure):
 
     try:
         energies = outcar.parse_dict["energies"]
-    except:
+    except Exception as e:
+        warnings.warn(f"process_outcar: failed to parse 'energies' ({e!r}).")
         energies = np.nan
 
     try:
@@ -311,27 +324,35 @@ def process_outcar(outcar, structure):
                 for i, cell in enumerate(outcar.parse_dict["cells"])
             ]
         )
-    except:
+    except Exception as e:
+        warnings.warn(
+            f"process_outcar: failed to build 'structures' from positions/cells "
+            f"({e!r})."
+        )
         ionic_step_structures = np.nan
 
     try:
         energies_zero = outcar.parse_dict["energies_zero"]
-    except:
+    except Exception as e:
+        warnings.warn(f"process_outcar: failed to parse 'energies_zero' ({e!r}).")
         energies_zero = np.nan
 
     try:
         forces = outcar.parse_dict["forces"]
-    except:
+    except Exception as e:
+        warnings.warn(f"process_outcar: failed to parse 'forces' ({e!r}).")
         forces = np.nan
 
     try:
         stresses = outcar.parse_dict["stresses"]
-    except:
+    except Exception as e:
+        warnings.warn(f"process_outcar: failed to parse 'stresses' ({e!r}).")
         stresses = np.nan
 
     try:
         magmoms = np.array(outcar.parse_dict["final_magmoms"])
-    except:
+    except Exception as e:
+        warnings.warn(f"process_outcar: failed to parse 'final_magmoms' ({e!r}).")
         magmoms = np.nan
 
     try:
@@ -343,18 +364,25 @@ def process_outcar(outcar, structure):
             for d in outcar.parse_dict["scf_energies"]
         ]
     except Exception as e:
-        print(e)
+        warnings.warn(
+            f"process_outcar: failed to compute 'scf_steps'/'scf_convergence' "
+            f"({e!r})."
+        )
         scf_steps = np.nan
         scf_conv_list = np.nan
 
     try:
         calc_start_time = outcar.parse_dict["execution_datetime"]
-    except:
+    except Exception as e:
+        warnings.warn(
+            f"process_outcar: failed to parse 'execution_datetime' ({e!r})."
+        )
         calc_start_time = np.nan
 
     try:
         consumed_time = outcar.parse_dict["resources"]
-    except:
+    except Exception as e:
+        warnings.warn(f"process_outcar: failed to parse 'resources' ({e!r}).")
         consumed_time = np.nan
 
     return pd.DataFrame(
@@ -529,7 +557,11 @@ def parse_vasp_directory(directory, extract_error_dirs=True, parse_all_in_dir=Tr
         element_list, element_count, electron_of_potcar = grab_electron_info(
             directory_path=directory, potcar_filename="POTCAR"
         )
-    except:
+    except Exception as e:
+        warnings.warn(
+            f"parse_vasp_directory: failed to parse electron info from POTCAR "
+            f"in {directory!r} ({e!r})."
+        )
         element_list = np.nan
         element_count = np.nan
         electron_of_potcar = np.nan
