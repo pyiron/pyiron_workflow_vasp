@@ -90,6 +90,30 @@ def test_parse_vasp_directory_real_outcar_reports_finite_energy(tmp_path):
     assert -20.0 < float(energy_arr[-1]) < -10.0
 
 
+def test_parse_vasp_directory_without_vasprun_or_potcar_emits_no_warnings(tmp_path):
+    """A missing vasprun.xml (documented fallback to vasp.log/error.out) and
+    a missing POTCAR (routinely stripped from archived directories for
+    licensing reasons) are both DESIGNED, expected-absence paths, not
+    failures -- parsing a directory that has everything else but those two
+    files must not warn at all. Measured over a real campaign this bug was
+    ~2 spurious warnings per archived directory (40 over 20 dirs), none
+    deduplicated since the message embeds a per-directory path.
+
+    The fixture directory (tests/fixtures/vasp_outcar_fe_bcc/) already lacks
+    POTCAR and vasprun.xml (see module docstring), so it is reused as-is.
+    """
+    work_dir = tmp_path / "vasp_calc"
+    shutil.copytree(FIXTURE_DIR, work_dir)
+    assert not (work_dir / "vasprun.xml").exists()
+    assert not (work_dir / "POTCAR").exists()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        parse_vasp_directory(str(work_dir), extract_error_dirs=False)
+
+    assert caught == [], [str(w.message) for w in caught]
+
+
 def test_process_outcar_warns_instead_of_silently_swallowing_missing_field():
     """The bare `except:` clauses in process_outcar now warn on failure.
 

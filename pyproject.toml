@@ -67,4 +67,5 @@ line_length = 88
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-filterwarnings = ["error::SyntaxWarning"] 
+filterwarnings = ["error::SyntaxWarning"]
+markers = ["integration: requires a real VASP binary (set ASSYST_VASP_BINARY)"] 

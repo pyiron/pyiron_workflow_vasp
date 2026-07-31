@@ -60,43 +60,41 @@ def check_convergence(
         filename_vasplog (str, optional): The name of the vasp.log file (default: "vasp.log").
         backup_vasplog (str, optional): The name of the backup log file (default: "error.out").
 
+    Falls back, in order, from ``vasprun.xml`` (authoritative) to
+    ``vasp.log`` to ``backup_vasplog`` (``error.out``), returning True as
+    soon as any source confirms convergence. A missing fallback file is the
+    documented, expected case for an archived calculation directory (e.g.
+    POTCAR/vasprun.xml are routinely stripped for licensing/size reasons)
+    and is silently skipped; a warning fires only when ``vasprun.xml``
+    exists but genuinely fails to parse.
+
     Returns:
         bool: True if the calculation has converged, False otherwise.
     """
-    try:
-        vr = Vasprun(filename=os.path.join(directory, filename_vasprun))
-        return vr.converged
-    except Exception as e:
-        warnings.warn(
-            f"convergence: failed to parse {filename_vasprun!r} ({e!r}); "
-            "falling back to log-file marker search."
-        )
-        line_converged = (
-            "reached required accuracy - stopping structural energy minimisation"
-        )
+    vasprun_path = os.path.join(directory, filename_vasprun)
+    if os.path.isfile(vasprun_path):
         try:
-            return is_line_in_file(
-                os.path.join(directory, filename_vasplog),
-                line=line_converged,
-                exact_match=False,
-            )
+            return Vasprun(filename=vasprun_path).converged
         except Exception as e:
             warnings.warn(
-                f"convergence: failed to search {filename_vasplog!r} ({e!r}); "
-                f"falling back to {backup_vasplog!r}."
+                f"convergence: failed to parse {filename_vasprun!r} ({e!r}); "
+                "falling back to log-file marker search."
             )
-            try:
-                return is_line_in_file(
-                    os.path.join(directory, backup_vasplog),
-                    line=line_converged,
-                    exact_match=False,
-                )
-            except Exception as e:
-                warnings.warn(
-                    f"convergence: failed to search {backup_vasplog!r} ({e!r}); "
-                    "returning False."
-                )
-                return False
+
+    line_converged = (
+        "reached required accuracy - stopping structural energy minimisation"
+    )
+    # is_line_in_file already swallows FileNotFoundError internally (returns
+    # False), so the isfile guard here isn't for exception-safety -- it's so
+    # a missing log file is treated the same as "line not found" without
+    # pretending we could have searched it.
+    for candidate in (filename_vasplog, backup_vasplog):
+        path = os.path.join(directory, candidate)
+        if os.path.isfile(path) and is_line_in_file(
+            path, line=line_converged, exact_match=False
+        ):
+            return True
+    return False
 
 
 def process_error_archives(directory):
@@ -553,15 +551,23 @@ def parse_vasp_directory(directory, extract_error_dirs=True, parse_all_in_dir=Tr
     results_df["KPOINTS"] = kpoints_list
     results_df["INCAR"] = df["INCAR"].tolist()
 
-    try:
-        element_list, element_count, electron_of_potcar = grab_electron_info(
-            directory_path=directory, potcar_filename="POTCAR"
-        )
-    except Exception as e:
-        warnings.warn(
-            f"parse_vasp_directory: failed to parse electron info from POTCAR "
-            f"in {directory!r} ({e!r})."
-        )
+    # A missing POTCAR is normal in an archived directory (routinely removed
+    # for licensing reasons before archiving) -- only warn on a genuine parse
+    # failure of a POTCAR that actually exists.
+    if os.path.isfile(os.path.join(directory, "POTCAR")):
+        try:
+            element_list, element_count, electron_of_potcar = grab_electron_info(
+                directory_path=directory, potcar_filename="POTCAR"
+            )
+        except Exception as e:
+            warnings.warn(
+                f"parse_vasp_directory: failed to parse electron info from POTCAR "
+                f"in {directory!r} ({e!r})."
+            )
+            element_list = np.nan
+            element_count = np.nan
+            electron_of_potcar = np.nan
+    else:
         element_list = np.nan
         element_count = np.nan
         electron_of_potcar = np.nan
