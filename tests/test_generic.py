@@ -42,6 +42,54 @@ def test_compress_directory_creates_tarball_and_returns_path(fake_vasp_dir):
         assert any(n.endswith("OUTCAR") for n in tf.getnames())
 
 
+def test_compress_directory_members_are_prefixed_with_directory_basename(
+    fake_vasp_dir,
+):
+    """Archive members must be directory-rooted (e.g. ``vaspcalc/OUTCAR``),
+    matching every archive produced before this port. A flat layout (bare
+    ``OUTCAR``) is an on-disk format split that downstream consumers
+    (ASSYST) would silently inherit, since archives extract flat into the
+    current directory instead of under a named subdirectory."""
+    run = pwf.node(compress_directory).run(
+        directory_path=str(fake_vasp_dir), actually_compress=True, inside_dir=True
+    )
+    tarballs = list(pathlib.Path(fake_vasp_dir).glob("*.tar.gz"))
+    assert len(tarballs) == 1
+    base = fake_vasp_dir.name
+    with tarfile.open(tarballs[0]) as tf:
+        names = tf.getnames()
+        assert names, "tarball has no members"
+        assert all(n.startswith(f"{base}/") for n in names), names
+
+
+def test_compress_directory_excludes_only_the_real_tarball_not_namesakes(
+    fake_vasp_dir,
+):
+    """Self-exclusion must compare the FULL path, not the bare filename. A
+    legitimate user file living in a subdirectory but sharing the tarball's
+    basename (e.g. ``calc/sub/calc.tar.gz``) must NOT be dropped from the
+    archive -- doing so is silent data loss, especially since
+    remove_calc_dir=True subsequently deletes the source directory."""
+    base = fake_vasp_dir.name
+    sub = fake_vasp_dir / "sub"
+    sub.mkdir()
+    namesake = sub / f"{base}.tar.gz"
+    namesake.write_text("this is real user data, not the output archive")
+
+    run = pwf.node(compress_directory).run(
+        directory_path=str(fake_vasp_dir), actually_compress=True, inside_dir=True
+    )
+    tarballs = list(pathlib.Path(fake_vasp_dir).glob("*.tar.gz"))
+    assert len(tarballs) == 1
+
+    with tarfile.open(tarballs[0]) as tf:
+        names = tf.getnames()
+        # the real output tarball must not have archived itself
+        assert f"{base}/{base}.tar.gz" not in names
+        # but the subdirectory namesake IS a legitimate file and must survive
+        assert f"{base}/sub/{base}.tar.gz" in names
+
+
 def test_compress_directory_is_a_noop_when_disabled(fake_vasp_dir):
     run = pwf.node(compress_directory).run(
         directory_path=str(fake_vasp_dir), actually_compress=False

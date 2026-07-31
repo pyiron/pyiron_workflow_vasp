@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
-from typing import Optional
 import tarfile
-import fnmatch
 import shutil
 import subprocess
 from pyiron_snippets.logger import logger
@@ -164,6 +162,12 @@ def compress_directory(
 ) -> str:
     """Compress ``directory_path`` to a gzipped tarball, returning the directory.
 
+    Archive members are rooted under the directory's basename (e.g.
+    ``calc/OUTCAR``, not bare ``OUTCAR``), matching every archive produced
+    before this port. Extracting an archive from any campaign -- old or new --
+    therefore lands files under the same ``<basename>/...`` prefix instead of
+    flat into the current directory.
+
     Returns the directory rather than the tarball so the value can be threaded
     onward to establish ordering. ``after`` is an ordering token; see
     :func:`delete_files_recursively`.
@@ -177,10 +181,16 @@ def compress_directory(
     with tarfile.open(tar_path, "w:gz") as tar:
         for root, _, files in os.walk(directory_path):
             for file in files:
-                if file in exclude or file == f"{base}.tar.gz":
-                    continue
                 full = os.path.join(root, file)
-                tar.add(full, arcname=os.path.relpath(full, directory_path))
+                # Compare the FULL path, not the bare filename: a legitimate
+                # user file such as calc/sub/calc.tar.gz must not be dropped
+                # just because it shares the output archive's basename.
+                if file in exclude or full == tar_path:
+                    continue
+                tar.add(
+                    full,
+                    arcname=os.path.join(base, os.path.relpath(full, directory_path)),
+                )
     return directory_path
 
 
