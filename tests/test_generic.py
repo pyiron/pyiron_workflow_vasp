@@ -118,3 +118,25 @@ def test_run_shell_is_concurrency_safe(abs_workdir, tmp_path):
         results = {f.result() for f in futures}
 
     assert results == {abs_workdir, other_abs}
+
+
+def test_submit_to_slurm_is_gone():
+    """Submission moved to assystant; the old helper imported PickleStorage,
+    which pyiron_workflow 0.19 removed outright."""
+    import pyiron_workflow_vasp.generic as generic
+
+    assert not hasattr(generic, "submit_to_slurm")
+
+
+def test_no_pickle_storage_references_remain():
+    import pathlib
+
+    import pyiron_workflow_vasp
+
+    root = pathlib.Path(pyiron_workflow_vasp.__file__).parent
+    offenders = [
+        p.name
+        for p in root.rglob("*.py")
+        if "PickleStorage" in p.read_text()
+    ]
+    assert offenders == []

@@ -179,68 +179,6 @@ def compress_directory(
     return directory_path
 
 
-def submit_to_slurm(
-    node,
-    /,
-    job_name=None,
-    output_file=None,
-    error_file=None,
-    time_limit="00:05:00",
-    partition="s.cmmg",
-    nodes=1,
-    ntasks=1,
-    cpus_per_task=1,
-    memory="1GB",
-):
-    """
-    An example of a helper function for running nodes on slurm.
-
-    - Saves the node
-    - Writes a slurm batch script that 
-        - Loads the node
-        - Runs it
-        - Saves it again
-    - Runs the batch script
-    """
-    if node.graph_root is not node:
-        raise ValueError(
-            f"Can only submit parent-most nodes, but {node.full_label} "
-            f"has root {node.graph_root.full_label}"
-        )
-        
-    node.save(backend="pickle")
-    p = node.as_path()
-    
-    if job_name is None:
-        job_name = node.full_label 
-        job_name = job_name.replace(node.lexical_delimiter, "_")
-        job_name = "pwf" + job_name
-        
-    script_content = f"""#!/bin/bash
-#SBATCH --job-name={job_name} 
-#SBATCH --output={p.joinpath("slurm.out").resolve() if output_file is None else output_file}
-#SBATCH --error={p.joinpath("slurm.err").resolve() if error_file is None else error_file}
-#SBATCH --time={time_limit}
-#SBATCH --partition={partition}
-#SBATCH --nodes={nodes}
-#SBATCH --ntasks={ntasks}
-#SBATCH --cpus-per-task={cpus_per_task}
-#SBATCH --mem={memory}
-
-# Execute Python script inline
-python - <<EOF
-from pyiron_workflow import PickleStorage
-node = PickleStorage().load(filename="{node.as_path().joinpath('picklestorage').resolve()}")  # Load
-node.run()  # Run
-node.save(backend="pickle")  # Save again
-EOF
-"""
-    submission_script = p.joinpath("node_submission.sh")
-    submission_script.write_text(script_content)
-    import subprocess
-    submission = subprocess.run(["sbatch", submission_script.resolve()])
-    return submission
-    
 @fr.atomic("payload")
 def remove_directory(
     directory_path: str, actually_remove: bool = False, payload: object = None
