@@ -79,7 +79,12 @@ def run_single(args: argparse.Namespace) -> None:
 
     print(f"converged: {convergence_status}")
     if vasp_output is not None:
-        print(f"final energy: {vasp_output['generic']['energy_pot'][-1]:.6f} eV")
+        # "energy_pot" is only populated when vasprun.xml was parsed; an
+        # OUTCAR-only run (vasprun.xml missing/disabled) only has
+        # "energy_tot" -- fall back rather than assume either is present.
+        generic = vasp_output["generic"]
+        energy = generic.get("energy_pot", generic.get("energy_tot"))
+        print(f"final energy: {energy[-1]:.6f} eV")
 
 
 def run_eos(args: argparse.Namespace) -> None:
@@ -112,8 +117,9 @@ def run_eos(args: argparse.Namespace) -> None:
         if vasp_output is None:
             print(f"[strain={strain:+.3f}] no output parsed; skipping")
             continue
-        volumes.append(vasp_output["generic"]["volume"][-1])
-        energies.append(vasp_output["generic"]["energy_pot"][-1])
+        generic = vasp_output["generic"]
+        volumes.append(generic["volume"][-1])
+        energies.append(generic.get("energy_pot", generic.get("energy_tot"))[-1])
 
     if not volumes:
         print("No converged points collected; nothing to fit.")
