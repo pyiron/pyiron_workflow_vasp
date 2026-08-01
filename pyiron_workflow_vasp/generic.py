@@ -181,8 +181,12 @@ def delete_files_recursively(
         workdir (str): The directory to search for files.
         files_to_be_deleted (list[str] | None): List of filenames to delete.
             ``None`` is treated as an empty list (nothing to delete) rather
-            than raising, since callers such as ``vasp_job`` may pass ``None``
-            through explicitly.
+            than raising -- a defensive, low-level guard for direct or
+            standalone callers of this node. ``vasp_job`` (``vasp.py``) does
+            NOT rely on this fallback: its ``resolve_cleanup_files`` node
+            intercepts a ``None`` ``files_to_be_deleted`` before this
+            function ever sees it and substitutes the documented default
+            cleanup list (``["CHG", "CHGCAR", "WAVECAR"]``) instead.
         after: An ordering token. It is never read, but accepting it lets a
             caller create a data edge that forces this node to run after
             another. pyiron_workflow 0.19 has no execution signals, so

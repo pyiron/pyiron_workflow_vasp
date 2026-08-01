@@ -35,8 +35,12 @@ def test_delete_files_recursively_tolerates_missing_directory(tmp_path):
 
 def test_delete_files_recursively_tolerates_none_files_to_be_deleted(fake_vasp_dir):
     """``files_to_be_deleted=None`` must be treated as "delete nothing", not
-    raise TypeError from ``file in None`` -- vasp_job passes it through as
-    None whenever the caller doesn't ask for cleanup."""
+    raise TypeError from ``file in None`` -- this is a defensive, low-level
+    guard for direct/standalone callers of this node. ``vasp_job`` itself no
+    longer passes ``None`` through unchanged: its ``resolve_cleanup_files``
+    node intercepts ``None`` and substitutes the documented default cleanup
+    list (``["CHG", "CHGCAR", "WAVECAR"]``) before this node ever sees it --
+    see ``test_vasp_job.py::test_vasp_job_runs_without_files_to_be_deleted_argument``."""
     run = pwf.node(delete_files_recursively).run(
         workdir=str(fake_vasp_dir), files_to_be_deleted=None
     )
