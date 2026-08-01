@@ -18,9 +18,7 @@ from pyiron_workflow_vasp.vasp import VaspInput, vasp_job
 
 @pytest.fixture
 def fe_structure():
-    return Structure(
-        Lattice.cubic(2.83), ["Fe"], [[0.0, 0.0, 0.0]]
-    )
+    return Structure(Lattice.cubic(2.83), ["Fe"], [[0.0, 0.0, 0.0]])
 
 
 @pytest.fixture
@@ -207,9 +205,9 @@ def test_vasp_job_runs_without_files_to_be_deleted_argument(
             f"with files_to_be_deleted omitted, {gone} should be part of the "
             "documented default cleanup and must be gone"
         )
-    assert os.path.exists(os.path.join(workdir, "OUTCAR")), (
-        "OUTCAR is not a default cleanup target and must survive"
-    )
+    assert os.path.exists(
+        os.path.join(workdir, "OUTCAR")
+    ), "OUTCAR is not a default cleanup target and must survive"
 
 
 def test_vasp_job_explicit_empty_list_deletes_nothing(
@@ -239,9 +237,9 @@ def test_vasp_job_explicit_empty_list_deletes_nothing(
     assert run.status == "finished"
     assert run.outputs.vasp_output["energy"] == -4.56
     for kept in ("CHG", "CHGCAR", "WAVECAR", "OUTCAR"):
-        assert os.path.exists(os.path.join(workdir, kept)), (
-            f"files_to_be_deleted=[] must keep everything, but {kept} is gone"
-        )
+        assert os.path.exists(
+            os.path.join(workdir, kept)
+        ), f"files_to_be_deleted=[] must keep everything, but {kept} is gone"
 
 
 def test_vasp_job_matches_production_direct_call_shape(
@@ -307,6 +305,6 @@ def test_vasp_job_matches_production_direct_call_shape(
             f"positional files_to_be_deleted=None must resolve to the "
             f"documented default cleanup list, but {gone} survived"
         )
-    assert os.path.exists(os.path.join(workdir, "OUTCAR")), (
-        "OUTCAR is not a default cleanup target and must survive"
-    )
+    assert os.path.exists(
+        os.path.join(workdir, "OUTCAR")
+    ), "OUTCAR is not a default cleanup target and must survive"

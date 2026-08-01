@@ -40,7 +40,8 @@ def test_delete_files_recursively_tolerates_none_files_to_be_deleted(fake_vasp_d
     longer passes ``None`` through unchanged: its ``resolve_cleanup_files``
     node intercepts ``None`` and substitutes the documented default cleanup
     list (``["CHG", "CHGCAR", "WAVECAR"]``) before this node ever sees it --
-    see ``test_vasp_job.py::test_vasp_job_runs_without_files_to_be_deleted_argument``."""
+    see ``test_vasp_job.py::test_vasp_job_runs_without_files_to_be_deleted_argument``.
+    """
     run = pwf.node(delete_files_recursively).run(
         workdir=str(fake_vasp_dir), files_to_be_deleted=None
     )
@@ -241,9 +242,5 @@ def test_no_pickle_storage_references_remain():
     import pyiron_workflow_vasp
 
     root = pathlib.Path(pyiron_workflow_vasp.__file__).parent
-    offenders = [
-        p.name
-        for p in root.rglob("*.py")
-        if "PickleStorage" in p.read_text()
-    ]
+    offenders = [p.name for p in root.rglob("*.py") if "PickleStorage" in p.read_text()]
     assert offenders == []

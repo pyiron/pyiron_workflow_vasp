@@ -120,9 +120,7 @@ def test_parse_vasp_output_default_uses_external_vaspparser_package(
 
 def test_generate_modified_incar_overrides_tag():
     base = Incar.from_dict({"ENCUT": 400, "ISIF": 3, "NSW": 100})
-    run = pwf.node(generate_modified_incar).run(
-        incar=base, modifications={"ISIF": 7}
-    )
+    run = pwf.node(generate_modified_incar).run(incar=base, modifications={"ISIF": 7})
     assert run.outputs.incar["ISIF"] == 7
     assert run.outputs.incar["ENCUT"] == 400
 
@@ -171,15 +169,15 @@ def test_generate_vasp_input_normalizes_pymatgen_structure_without_mutating_it()
     )
 
     assert isinstance(run.outputs.vasp_input.structure, AseAtoms)
-    assert source.volume == pytest.approx(original_volume), (
-        "the caller's pymatgen Structure must survive unchanged (volume changed)"
-    )
-    assert source.lattice.abc == pytest.approx(original_abc), (
-        "the caller's pymatgen Structure must survive unchanged (lattice changed)"
-    )
-    assert len(source) == original_num_sites, (
-        "the caller's pymatgen Structure must survive unchanged (site count changed)"
-    )
+    assert source.volume == pytest.approx(
+        original_volume
+    ), "the caller's pymatgen Structure must survive unchanged (volume changed)"
+    assert source.lattice.abc == pytest.approx(
+        original_abc
+    ), "the caller's pymatgen Structure must survive unchanged (lattice changed)"
+    assert (
+        len(source) == original_num_sites
+    ), "the caller's pymatgen Structure must survive unchanged (site count changed)"
     assert run.outputs.vasp_input.structure is not source, (
         "normalization must produce a new ase.Atoms object, not alias the "
         "caller's pymatgen Structure"
@@ -219,9 +217,9 @@ def test_construct_sequential_vasp_input_round_trips_last_structure():
     assert not isinstance(result_structure, str)
     assert isinstance(result_structure, AseAtoms)
     assert len(result_structure) == 1
-    assert result_structure.cell.cellpar()[0] == pytest.approx(3.5), (
-        "must pick up the LAST ionic step (3.5 A), not the first (4.0 A)"
-    )
+    assert result_structure.cell.cellpar()[0] == pytest.approx(
+        3.5
+    ), "must pick up the LAST ionic step (3.5 A), not the first (4.0 A)"
 
 
 def test_construct_sequential_vasp_input_uses_most_recent_row_not_oldest():
