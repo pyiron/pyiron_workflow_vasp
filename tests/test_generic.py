@@ -72,6 +72,7 @@ def test_compress_directory_members_are_prefixed_with_directory_basename(
     run = pwf.node(compress_directory).run(
         directory_path=str(fake_vasp_dir), actually_compress=True, inside_dir=True
     )
+    assert run.status == "finished"
     tarballs = list(pathlib.Path(fake_vasp_dir).glob("*.tar.gz"))
     assert len(tarballs) == 1
     base = fake_vasp_dir.name
@@ -98,6 +99,7 @@ def test_compress_directory_excludes_only_the_real_tarball_not_namesakes(
     run = pwf.node(compress_directory).run(
         directory_path=str(fake_vasp_dir), actually_compress=True, inside_dir=True
     )
+    assert run.status == "finished"
     tarballs = list(pathlib.Path(fake_vasp_dir).glob("*.tar.gz"))
     assert len(tarballs) == 1
 
