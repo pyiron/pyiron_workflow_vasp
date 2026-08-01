@@ -242,3 +242,71 @@ def test_vasp_job_explicit_empty_list_deletes_nothing(
         assert os.path.exists(os.path.join(workdir, kept)), (
             f"files_to_be_deleted=[] must keep everything, but {kept} is gone"
         )
+
+
+def test_vasp_job_matches_production_direct_call_shape(
+    tmp_path, fe_structure, stub_vasp_command_full_output
+):
+    """Mirrors the ONLY real production call shape of vasp_job, exactly:
+    pyiron_workflow_assyst/workflow.py (lines 391, 400, 409, 432, 464) calls
+    vasp_job as a direct function call with NINE POSITIONAL arguments,
+    files_to_be_deleted (None) sitting at position 4, e.g.:
+
+        out7, conv7 = vasp_job(
+            path7, input7, vasp_command, None, compress_dirs,
+            compressed_file_in_dir, remove_calc_dirs, vasp_parser_function,
+            parser_args7,
+        )
+
+    Every other test in this file either goes through pwf.node(...).run(
+    **kwargs) or uses keyword arguments -- neither exercises the direct-call,
+    all-positional, tuple-unpacking shape ASSYST actually uses, nor pins
+    down which POSITION files_to_be_deleted's None sits at. That gap matters
+    concretely: nothing here would catch a future reorder of vasp_job's
+    parameters silently shifting ASSYST's positional None onto a different
+    argument -- the whole suite would stay green while the ~64,000-
+    calculation CHGCAR/WAVECAR retention regression (see
+    test_vasp_job_runs_without_files_to_be_deleted_argument) comes straight
+    back with zero test failures and zero warnings.
+    """
+    workdir = str((tmp_path / "calc5").resolve())
+    incar = Incar.from_dict({"ENCUT": 300, "NSW": 0})
+    vasp_input = VaspInput(structure=fe_structure, incar=incar, potcar_paths=[])
+
+    def fake_parser(directory):
+        return {"energy": -5.55, "directory": directory}
+
+    parser_args = {"directory": workdir}
+
+    # Direct call, all positional, exactly matching the production call
+    # shape and argument order -- workdir, vasp_input, command,
+    # files_to_be_deleted(=None), compress, compressed_file_in_dir,
+    # remove_calc_dir, vasp_parser_function, vasp_parser_args.
+    result = vasp_job(
+        workdir,
+        vasp_input,
+        stub_vasp_command_full_output,
+        None,
+        False,
+        False,
+        False,
+        fake_parser,
+        parser_args,
+    )
+
+    # ASSYST unpacks the return value as a 2-tuple: out, conv = vasp_job(...)
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    vasp_output, convergence_status = result
+
+    assert convergence_status is True
+    assert vasp_output["energy"] == -5.55
+
+    for gone in ("CHG", "CHGCAR", "WAVECAR"):
+        assert not os.path.exists(os.path.join(workdir, gone)), (
+            f"positional files_to_be_deleted=None must resolve to the "
+            f"documented default cleanup list, but {gone} survived"
+        )
+    assert os.path.exists(os.path.join(workdir, "OUTCAR")), (
+        "OUTCAR is not a default cleanup target and must survive"
+    )
