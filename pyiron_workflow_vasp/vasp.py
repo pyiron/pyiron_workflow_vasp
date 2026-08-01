@@ -15,13 +15,16 @@ from pymatgen.io.vasp.inputs import Incar, Kpoints
 from pymatgen.io.vasp.outputs import Vasprun
 from pymatgen.io.ase import AseAtomsAdaptor
 
-from vaspparser.vasp.output import parse_vasp_output as pyiron_atomistics_pvo
-
 from ase import Atoms
 
-from pyiron_workflow import Workflow
+import flowrep as fr
 
-from pyiron_workflow_vasp.generic import delete_files_recursively, compress_directory, remove_dir, shell, isLineInFile
+from pyiron_workflow_vasp.generic import (
+    compress_directory,
+    delete_files_recursively,
+    remove_directory,
+    run_shell,
+)
 
 from pyiron_snippets.logger import logger
 
@@ -104,7 +107,7 @@ def read_potcar_config(config_file: Path) -> dict:
         config_data["default_POTCAR_path"] = config_data[
             f"vasp_POTCAR_path_{default_POTCAR_set}"
         ]
-        
+
         # Set the pseudopotential CSV file suffix (defaults to functional if not specified)
         if default_pseudopotential_set:
             config_data["pseudopotential_csv_suffix"] = default_pseudopotential_set
@@ -182,6 +185,15 @@ class VaspInput:
           useful when custom/non-default potentials are required for specific elements.
         - When potcar_paths is used, the class does not validate that the provided POTCAR files match the elements in the structure,
           so incorrect configurations may lead to invalid calculations.
+        - ``structure`` may be given as either an ``ase.Atoms`` or a ``pymatgen.core.Structure``; ``__post_init__``
+          normalizes a pymatgen ``Structure`` to ``ase.Atoms`` once, at construction, since the file-writing helpers
+          (``write_POSCAR``, ``get_default_POTCAR_paths``) only understand ``ase.Atoms``. The normalization never
+          mutates the object the caller passed in.
+        - **Per-site magnetic moments are NOT propagated to the INCAR.** If ``structure`` carries
+          ``site_properties={"magmom": ...}`` (pymatgen) or per-atom initial magnetic moments (ase), those are
+          silently dropped -- neither the ase nor the pymatgen write path ever wrote a MAGMOM tag from the
+          structure. Set MAGMOM explicitly as an INCAR string (e.g. ``"3*2.5 1*-2.5"``) if the calculation needs it;
+          this is the contract downstream ASSYST campaigns already rely on.
     """
 
     structure: Atoms
@@ -192,6 +204,18 @@ class VaspInput:
     kpoints: Optional[Kpoints] = None
 
     def __post_init__(self) -> None:
+        # Normalize once, at construction, so every producer of a VaspInput
+        # (generate_vasp_input, construct_sequential_vasp_input, or direct
+        # construction by a caller/test) ends up with an ase.Atoms structure
+        # regardless of what representation it was handed. This never
+        # mutates the caller's original object -- AseAtomsAdaptor.get_atoms
+        # returns a new object; self.structure is simply rebound. Doing this
+        # here (rather than at each call site) also matters because
+        # pyiron_workflow 0.19 evaluates sibling nodes concurrently, so a
+        # call-site mutation of a shared structure object would race.
+        if isinstance(self.structure, Structure):
+            self.structure = AseAtomsAdaptor.get_atoms(self.structure)
+
         # Resolve the POTCAR library path lazily so importing the package
         # doesn't require a config file. Only resolve when the user hasn't
         # supplied explicit ``potcar_paths``.
@@ -253,15 +277,16 @@ def write_KPOINTS(
     return kpoint_path
 
 
-@Workflow.wrap.as_function_node("workdir")
-def create_WorkingDirectory(workdir: str, quiet: bool = False) -> str:
+@fr.atomic("workdir")
+def create_working_directory(workdir: str, quiet: bool = False) -> str:
     """
     Create a working directory if it doesn't exist.
-    
+
     Args:
         workdir (str): Path to the directory to create.
-        quiet (bool, optional): If True, suppress warnings. Defaults to False.
-    
+        quiet (bool, optional): If True, suppress the "already exists"
+            warning when ``workdir`` is pre-existing. Defaults to False.
+
     Returns:
         str: Path to the created or existing directory.
     """
@@ -269,25 +294,27 @@ def create_WorkingDirectory(workdir: str, quiet: bool = False) -> str:
     if not os.path.exists(workdir):
         os.makedirs(workdir)
         logger.info(f"made directory '{workdir}'")
-    else:
+    elif not quiet:
         warnings.warn(
             f"Directory '{workdir}' already exists. Existing files may be overwritten."
         )
     return workdir
 
 
-@Workflow.wrap.as_function_node("workdir")
-def write_VaspInputSet(workdir: str, vasp_input: VaspInput) -> str:
+@fr.atomic("workdir")
+def write_vasp_input_set(workdir: str, vasp_input: VaspInput) -> str:
     """
     Write VASP input files to the working directory.
-    
+
     Args:
         workdir (str): Path to the working directory.
         vasp_input (VaspInput): VASP input object containing structure, INCAR, and POTCAR information.
-    
+
     Returns:
         str: Path to the working directory.
     """
+    # vasp_input.structure is already an ase.Atoms here: VaspInput.__post_init__
+    # normalizes a pymatgen Structure once, at construction, for every producer.
     _ = write_POSCAR(workdir=workdir, structure=vasp_input.structure)
     _ = write_INCAR(workdir=workdir, incar=vasp_input.incar)
     _ = write_POTCAR(workdir=workdir, vasp_input=vasp_input)
@@ -297,8 +324,13 @@ def write_VaspInputSet(workdir: str, vasp_input: VaspInput) -> str:
     return workdir
 
 
-@Workflow.wrap.as_function_node("output_dict")
-def parse_VaspOutput(workdir, function=None, parser_args=None):
+@fr.atomic("output_dict")
+def parse_vasp_output(
+    workdir: str,
+    function=None,
+    parser_args: Optional[dict] = None,
+    after: object = None,
+):
     """
     Parse VASP output files in the working directory.
 
@@ -309,9 +341,17 @@ def parse_VaspOutput(workdir, function=None, parser_args=None):
             ``parser_args`` is overridden with ``{"working_directory": workdir}``.
         parser_args (dict, optional): Keyword arguments to pass to ``function``.
             Ignored when ``function`` is ``None``.
+        after: An ordering token; see :func:`pyiron_workflow_vasp.generic.delete_files_recursively`.
+            Never read -- accepting it lets a caller (``vasp_job``) create a
+            data edge that forces parsing to run after the shell command has
+            finished, since pyiron_workflow 0.19 has no execution signals.
 
     Returns:
-        dict: Dictionary containing parsed VASP output data.
+        Whatever ``function`` returns. The default parser
+        (``vaspparser.vasp.output.parse_vasp_output``) returns a hierarchical
+        ``dict``, not the ``"output_dict"`` output-port name's literal type --
+        that name predates this port and is kept for compatibility with
+        existing callers/tests.
     """
     if function is None:
         from vaspparser.vasp.output import parse_vasp_output as parse_vasp_directory
@@ -323,26 +363,27 @@ def parse_VaspOutput(workdir, function=None, parser_args=None):
     return parse_vasp_directory(**parser_args)
 
 
-@Workflow.wrap.as_function_node("convergence")
+@fr.atomic("convergence")
 def check_convergence(
     workdir: str,
     filename_vasprun: str = "vasprun.xml",
     filename_vasplog: str = "vasp.log",
     backup_vasplog: str = "error.out",
+    after: object = None,
 ) -> bool:
     """
     Check if a VASP calculation has converged.
-    
+
     Args:
         workdir (str): Path to the working directory.
         filename_vasprun (str, optional): Name of the vasprun.xml file. Defaults to "vasprun.xml".
         filename_vasplog (str, optional): Name of the VASP log file. Defaults to "vasp.log".
         backup_vasplog (str, optional): Name of the backup log file. Defaults to "error.out".
-    
+        after: An ordering token; see :func:`pyiron_workflow_vasp.generic.delete_files_recursively`.
+
     Returns:
         bool: True if the calculation has converged, False otherwise.
     """
-    converged = False
     line_converged = (
         "reached required accuracy - stopping structural energy minimisation"
     )
@@ -351,26 +392,26 @@ def check_convergence(
     # and finally the backup log captured by the queueing system.
     try:
         vr = Vasprun(filename=os.path.join(workdir, filename_vasprun))
-        converged = vr.converged
+        return bool(vr.converged)
     except Exception:
-        for logname in (filename_vasplog, backup_vasplog):
-            try:
-                converged = isLineInFile.node_function(
-                    filepath=os.path.join(workdir, logname),
-                    line=line_converged,
-                    exact_match=False,
-                )
-                if converged:
-                    break
-            except Exception:
-                continue
+        pass
 
-    return converged
+    for logname in (filename_vasplog, backup_vasplog):
+        path = os.path.join(workdir, logname)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r") as handle:
+                if any(line_converged in file_line for file_line in handle):
+                    return True
+        except Exception:
+            continue
+
+    return False
 
 
-@Workflow.wrap.as_macro_node("vasp_output", "convergence_status")
+@fr.workflow("vasp_output", "convergence_status")
 def vasp_job(
-    self,
     workdir: str,
     vasp_input: VaspInput,
     command: str = "module load vasp; module load intel/19.1.0 impi/2019.6; unset I_MPI_HYDRA_BOOTSTRAP; unset I_MPI_PMI_LIBRARY; mpiexec -n 1 vasp_std",
@@ -383,53 +424,66 @@ def vasp_job(
 ):
     """
     Run a VASP calculation with the specified input parameters.
-    
+
+    pyiron_workflow 0.19 removed execution signals (``>>``/``starting_nodes``),
+    so the ordering that a pre-0.19 macro would express with ``>>`` is rebuilt
+    here as data dependencies:
+
+        create_working_directory -> write_vasp_input_set -> run_shell
+        parse_vasp_output(after=shell_result), check_convergence(after=shell_result)
+        delete_files_recursively(after=raw_output) -> compress_directory(after=convergence)
+        -> remove_directory(payload=raw_output)
+
+    The ``after=`` arguments are ordering tokens that are never read by the
+    receiving node; they exist only to create the data edge. This guarantees:
+    inputs are written before VASP runs; output is parsed before anything is
+    deleted; convergence is determined before the directory is compressed or
+    removed.
+
     Args:
-        self: The workflow instance.
         workdir (str): Path to the working directory.
         vasp_input (VaspInput): VASP input object containing structure, INCAR, and POTCAR information.
         command (str, optional): Command to run VASP. Defaults to a specific module loading command.
-        files_to_be_deleted (list[str], optional): List of files to delete after the calculation. 
-                                                  Defaults to ["CHG", "CHGCAR", "WAVECAR"].
+        files_to_be_deleted (list[str], optional): List of files to delete after the calculation.
+            Defaults to ``None`` (nothing is deleted).
         compress (bool, optional): Whether to compress the output directory. Defaults to False.
-        compressed_file_in_dir (bool, optional): Whether to place the compressed file in the output directory. 
+        compressed_file_in_dir (bool, optional): Whether to place the compressed file in the output directory.
                                                 Defaults to False.
-        remove_calc_dir (bool, optional): Whether to remove the calculation directory after compression. 
+        remove_calc_dir (bool, optional): Whether to remove the calculation directory after compression.
                                          Defaults to False.
         vasp_parser_function (callable, optional): Function to parse VASP output. This should be a regular Python function
                                                  that takes a workdir parameter and returns parsed output. If None, the
-                                                 default parse_VaspOutput function will be used.
+                                                 default parse_vasp_output function will be used.
         vasp_parser_args (dict, optional): Additional arguments to pass to the vasp_parser_function. Defaults to {}.
-    
+
     Returns:
         tuple: (vasp_output, convergence_status)
     """
-    if files_to_be_deleted is None:
-        files_to_be_deleted = ["CHG", "CHGCAR", "WAVECAR"]
-    if vasp_parser_args is None:
-        vasp_parser_args = {}
-    self.working_dir = create_WorkingDirectory(workdir=workdir)
-    self.vaspwriter = write_VaspInputSet(workdir=workdir, vasp_input=vasp_input)
-    self.job = shell(command=command, workdir=workdir)
-    self.vasp_output = parse_VaspOutput(workdir=workdir, function=vasp_parser_function, parser_args=vasp_parser_args)
-    self.convergence_status = check_convergence(workdir=workdir)
-    self.cleanup = delete_files_recursively(workdir=workdir, files_to_be_deleted=files_to_be_deleted)
-    self.compress_operation = compress_directory(directory_path=workdir, actually_compress=compress, inside_dir=compressed_file_in_dir)
-    self.remove_dir = remove_dir(directory_path=workdir, actually_remove=remove_calc_dir)
-    (
-        self.working_dir
-        >> self.vaspwriter
-        >> self.job
-        >> self.vasp_output
-        >> self.convergence_status
-        >> self.cleanup
-        >> self.compress_operation
-        >> self.remove_dir
+    wd_created = create_working_directory(workdir)
+    wd_written = write_vasp_input_set(wd_created, vasp_input)
+    shell_result = run_shell(command, wd_written)
+    raw_output = parse_vasp_output(
+        wd_written, vasp_parser_function, vasp_parser_args, after=shell_result
     )
-    # This looks weird but it's mandatory for the signals!
-    self.starting_nodes = [self.working_dir]
-
-    return self.vasp_output, self.convergence_status
+    convergence = check_convergence(wd_written, after=shell_result)
+    # NOTE: there is no explicit data edge from `convergence` into
+    # delete_files_recursively below (it is ordered after `raw_output` /
+    # parse_vasp_output instead, not after check_convergence). That is safe
+    # ONLY because 0.19's DAG-layer barrier places delete_files_recursively
+    # in a layer after check_convergence has already run, so convergence is
+    # always read before any deletion happens -- this is a dependency on
+    # executor/layering semantics, not on a data edge. If a future edit
+    # changes the execution model (e.g. separate executors without a shared
+    # layer barrier) this ordering guarantee disappears silently; add an
+    # explicit `after=convergence` edge if that assumption is ever relaxed.
+    wd_cleaned = delete_files_recursively(
+        wd_written, files_to_be_deleted, after=raw_output
+    )
+    wd_archived = compress_directory(
+        wd_cleaned, compress, compressed_file_in_dir, after=convergence
+    )
+    vasp_output = remove_directory(wd_archived, remove_calc_dir, raw_output)
+    return vasp_output, convergence
 
 
 def stack_element_string(structure) -> tuple[list[str], list[int]]:
@@ -474,22 +528,14 @@ def get_default_POTCAR_paths(
     return potcar_paths
 
 
-#%% These are utilities 
-@Workflow.wrap.as_function_node
-def generate_VaspInput(structure,
-                       incar,
-                       potcar_paths):
-    print(type(structure))
-    vaspinput = VaspInput(structure, incar, potcar_paths=potcar_paths)
-    return vaspinput
-    
-@Workflow.wrap.as_function_node
-def get_multiple_input(object, n=1):
-    objects_list = [object] * n
-    return objects_list
-    
-@Workflow.wrap.as_function_node("incar")
-def generate_modified_incar(incar, modifications):
+#%% These are utilities
+@fr.atomic("vasp_input")
+def generate_vasp_input(structure, incar: Incar, potcar_paths=None) -> VaspInput:
+    return VaspInput(structure=structure, incar=incar, potcar_paths=potcar_paths)
+
+
+@fr.atomic("incar")
+def generate_modified_incar(incar: Incar, modifications: dict) -> Incar:
     """
     Generates a modified INCAR dictionary by updating specific keys.
 
@@ -533,20 +579,50 @@ def generate_modified_incar(incar, modifications):
     """
     if not isinstance(modifications, dict):
         raise ValueError("Modifications must be provided as a dictionary.")
-    
-    # Create a copy of the original INCAR and apply modifications
+
+    # Create a copy of the original INCAR and apply modifications -- copying
+    # (rather than mutating in place) matters because pyiron_workflow 0.19
+    # evaluates sibling nodes concurrently, and the same Incar object may be
+    # fanned out to several of them.
     modified_incar = incar.copy()
     for key, value in modifications.items():
         modified_incar[key] = value
 
-    return Incar.from_dict(modified_incar)
+    return modified_incar
 
-@Workflow.wrap.as_function_node("VaspInput")
-def construct_sequential_VaspInput_from_vaspoutput_structure(vasp_output,
-                                            incar,
-                                            potcar_paths):
-    
-    vi = VaspInput(AseAtomsAdaptor.get_atoms(Structure.from_str(vasp_output.structures.iloc[0][-1], fmt="json")),
-                   incar,
-                   potcar_paths=potcar_paths)
-    return vi
+
+@fr.atomic("vasp_input")
+def construct_sequential_vasp_input(
+    vasp_output: pd.DataFrame, incar: Incar, potcar_paths=None
+) -> VaspInput:
+    """Takes the most recent calculation in the directory and its final
+    ionic step, and builds the next VaspInput from it.
+
+    ``vasp_output`` is the DataFrame produced by the bundled legacy parser
+    (see ``vasp_parser/output.py``, ``parse_vasp_directory``): one row per
+    OUTCAR* found plus one row per error archive, sorted ASCENDING by
+    ``calc_start_time``. Its ``structures`` column holds, per row, an array
+    of ``Structure.to_json()`` strings, one per ionic step -- NOT structure
+    objects.
+
+    ``.iloc[-1]`` selects the LAST row, i.e. the most recent calculation,
+    not ``.iloc[0]`` (the oldest/earliest). This matters whenever a
+    directory holds more than one row -- e.g. a custodian restart or an
+    error archive -- such as ASSYST's ISIF7 -> ISIF5 -> ISIF2 chains run
+    with max_errors>0: picking the oldest row would feed the
+    crashed/earliest attempt's structure into the next stage instead of
+    continuing from where the calculation actually left off.
+    ``vasp_output.structures.iloc[-1][-1]`` is therefore the JSON string for
+    the last ionic step of the most recent row, and must be round-tripped
+    back through ``Structure.from_str(..., fmt="json")`` before it is
+    usable. ``VaspInput.__post_init__`` then normalizes that pymatgen
+    Structure to ase.Atoms, same as every other VaspInput producer.
+    """
+    # str(...): parse_vasp_directory stores the per-step JSON strings in a
+    # numpy array, so indexing it back out yields numpy.str_ rather than a
+    # plain str. pymatgen's JSON reader (orjson) rejects numpy.str_ even
+    # though it is a str subclass, so it must be coerced explicitly.
+    structure = Structure.from_str(
+        str(vasp_output.structures.iloc[-1][-1]), fmt="json"
+    )
+    return VaspInput(structure=structure, incar=incar, potcar_paths=potcar_paths)

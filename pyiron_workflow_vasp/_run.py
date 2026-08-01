@@ -45,7 +45,7 @@ def run_vasp(
     """
     from vaspparser.vasp.output import parse_vasp_output
 
-    from pyiron_workflow_vasp.generic import shell
+    from pyiron_workflow_vasp.generic import run_shell
     from pyiron_workflow_vasp.vasp import (
         VaspInput,
         get_default_POTCAR_paths,
@@ -89,8 +89,9 @@ def run_vasp(
     )
     write_POTCAR(workdir=working_directory, vasp_input=vasp_input)
 
-    # 5. Run the binary - shell is a pyiron_workflow Node; use the raw callable
-    shell.node_function(command=command, workdir=working_directory)
+    # 5. Run the binary - run_shell is a plain flowrep-decorated function,
+    #    directly callable (no `.node_function` indirection needed).
+    run_shell(command=command, workdir=working_directory)
 
     # 6. Parse the output
     parsed = parse_vasp_output(working_directory=working_directory)
