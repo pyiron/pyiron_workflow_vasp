@@ -635,36 +635,72 @@ def generate_modified_incar(incar: Incar, modifications: dict) -> Incar:
 
 @fr.atomic("vasp_input")
 def construct_sequential_vasp_input(
-    vasp_output: pd.DataFrame, incar: Incar, potcar_paths=None
+    vasp_output: pd.DataFrame | dict, incar: Incar, potcar_paths=None
 ) -> VaspInput:
-    """Takes the most recent calculation in the directory and its final
-    ionic step, and builds the next VaspInput from it.
+    """Takes the most recent calculation's final structure and builds the
+    next VaspInput from it -- the ISIF7 -> ISIF5 -> ISIF2 handoff.
 
-    ``vasp_output`` is the DataFrame produced by the bundled legacy parser
-    (see ``vasp_parser/output.py``, ``parse_vasp_directory``): one row per
-    OUTCAR* found plus one row per error archive, sorted ASCENDING by
-    ``calc_start_time``. Its ``structures`` column holds, per row, an array
-    of ``Structure.to_json()`` strings, one per ionic step -- NOT structure
-    objects.
+    ``vasp_output`` is whatever ``parse_vasp_output``/``vasp_job`` produced,
+    and TWO shapes are supported:
 
-    ``.iloc[-1]`` selects the LAST row, i.e. the most recent calculation,
-    not ``.iloc[0]`` (the oldest/earliest). This matters whenever a
-    directory holds more than one row -- e.g. a custodian restart or an
-    error archive -- such as ASSYST's ISIF7 -> ISIF5 -> ISIF2 chains run
-    with max_errors>0: picking the oldest row would feed the
-    crashed/earliest attempt's structure into the next stage instead of
-    continuing from where the calculation actually left off.
-    ``vasp_output.structures.iloc[-1][-1]`` is therefore the JSON string for
-    the last ionic step of the most recent row, and must be round-tripped
-    back through ``Structure.from_str(..., fmt="json")`` before it is
-    usable. ``VaspInput.__post_init__`` then normalizes that pymatgen
-    Structure to ase.Atoms, same as every other VaspInput producer.
+    - **dict** (the DEFAULT parser -- the external
+      ``vaspparser.vasp.output.parse_vasp_output``): the final relaxed
+      structure is read directly from ``vasp_output["structure"]``, itself a
+      dict of ``numbers``/``positions`` (cartesian)/``cell``/``pbc`` numpy
+      arrays -- exactly the keyword arguments ``ase.Atoms`` takes, so it is
+      built via ``Atoms(**vasp_output["structure"])``. There is no
+      restart-chain aggregation to do here: this parser's dict already
+      reflects the single most recent run of the directory it was pointed
+      at.
+    - **pandas.DataFrame** (the BUNDLED legacy parser, see
+      ``vasp_parser/output.py``, ``parse_vasp_directory``): one row per
+      OUTCAR* found plus one row per error archive, sorted ASCENDING by
+      ``calc_start_time``. Its ``structures`` column holds, per row, an array
+      of ``Structure.to_json()`` strings, one per ionic step -- NOT structure
+      objects.
+
+      ``.iloc[-1]`` selects the LAST row, i.e. the most recent calculation,
+      not ``.iloc[0]`` (the oldest/earliest). This matters whenever a
+      directory holds more than one row -- e.g. a custodian restart or an
+      error archive -- such as ASSYST's ISIF7 -> ISIF5 -> ISIF2 chains run
+      with max_errors>0: picking the oldest row would feed the
+      crashed/earliest attempt's structure into the next stage instead of
+      continuing from where the calculation actually left off.
+      ``vasp_output.structures.iloc[-1][-1]`` is therefore the JSON string for
+      the last ionic step of the most recent row, and must be round-tripped
+      back through ``Structure.from_str(..., fmt="json")`` before it is
+      usable. ``str(...)`` is required because ``parse_vasp_directory``
+      stores the per-step JSON strings in a numpy array, so indexing it back
+      out yields ``numpy.str_`` rather than a plain ``str`` -- and
+      pymatgen's JSON reader (orjson) rejects ``numpy.str_`` even though it
+      is a ``str`` subclass.
+
+    ``VaspInput.__post_init__`` then normalizes either representation
+    (ase.Atoms or pymatgen Structure) to ase.Atoms, same as every other
+    VaspInput producer.
+
+    Raises:
+        TypeError: if ``vasp_output`` is neither a dict nor a
+            ``pandas.DataFrame``.
     """
-    # str(...): parse_vasp_directory stores the per-step JSON strings in a
-    # numpy array, so indexing it back out yields numpy.str_ rather than a
-    # plain str. pymatgen's JSON reader (orjson) rejects numpy.str_ even
-    # though it is a str subclass, so it must be coerced explicitly.
-    structure = Structure.from_str(
-        str(vasp_output.structures.iloc[-1][-1]), fmt="json"
-    )
+    if isinstance(vasp_output, dict):
+        structure = Atoms(**vasp_output["structure"])
+    elif isinstance(vasp_output, pd.DataFrame):
+        # str(...): parse_vasp_directory stores the per-step JSON strings in
+        # a numpy array, so indexing it back out yields numpy.str_ rather
+        # than a plain str. pymatgen's JSON reader (orjson) rejects
+        # numpy.str_ even though it is a str subclass, so it must be coerced
+        # explicitly.
+        structure = Structure.from_str(
+            str(vasp_output.structures.iloc[-1][-1]), fmt="json"
+        )
+    else:
+        raise TypeError(
+            "construct_sequential_vasp_input: unsupported vasp_output type "
+            f"{type(vasp_output).__name__!r}. Expected either a dict (the "
+            "external vaspparser default parser's output, carrying a "
+            "'structure' key) or a pandas.DataFrame (the bundled "
+            "parse_vasp_directory legacy parser's output, carrying a "
+            "'structures' column)."
+        )
     return VaspInput(structure=structure, incar=incar, potcar_paths=potcar_paths)

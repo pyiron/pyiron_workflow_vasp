@@ -93,6 +93,16 @@ API and execution signals (`>>`, `starting_nodes`) outright.
   and `vasp_job(...).run()`/`.outputs.*.value`, neither of which exist
   anymore). Rewritten and executed end-to-end against a real (committed)
   OUTCAR fixture to confirm they work.
+- `construct_sequential_vasp_input` (the ISIF7 -> ISIF5 -> ISIF2 handoff)
+  only accepted the bundled legacy parser's `pandas.DataFrame` shape, but
+  `vasp_job`'s DEFAULT parser is the external
+  `vaspparser.vasp.output.parse_vasp_output`, which returns a `dict` --
+  every real ASSYST relaxation chain died at the ISIF7 -> ISIF5 handoff
+  with `AttributeError: 'dict' object has no attribute 'structures'`,
+  confirmed against a real 2-atom Fe VASP run. Now accepts both shapes
+  (`Atoms(**vasp_output["structure"])` for the dict case; unchanged
+  `.iloc[-1]`/`str(...)` DataFrame handling otherwise) and raises a clear
+  `TypeError` naming both supported shapes for anything else.
 
 ## [0.1.0] - 2026-05-12
 
