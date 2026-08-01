@@ -1,4 +1,5 @@
 import os
+import pathlib
 import warnings
 
 import numpy as np
@@ -9,6 +10,7 @@ from ase import Atoms as AseAtoms
 from pymatgen.core import Lattice, Structure
 from pymatgen.io.ase import AseAtomsAdaptor
 from pymatgen.io.vasp.inputs import Incar
+from vaspparser.vasp.output import parse_vasp_output as external_parse_vasp_output
 
 import pyiron_workflow_vasp.vasp as vasp_mod
 from pyiron_workflow_vasp.vasp import (
@@ -264,3 +266,64 @@ def test_construct_sequential_vasp_input_uses_most_recent_row_not_oldest():
         "calc_start_time), not the older row's last step (3.9 A) or either "
         "row's first step (3.6/4.0 A)"
     )
+
+
+# --- construct_sequential_vasp_input: the DEFAULT parser's dict shape -----
+#
+# vasp_job's DEFAULT parser is the external vaspparser.vasp.output.parse_vasp
+# _output, which returns a dict, not the bundled parser's DataFrame. Every
+# test above hand-builds a DataFrame, which is exactly why this shape
+# mismatch (AttributeError: 'dict' object has no attribute 'structures')
+# shipped past 75 passing tests and two review rounds: nothing ever fed
+# construct_sequential_vasp_input what vasp_job's default parser actually
+# produces. This test uses a REAL captured dict -- parsed from a genuine
+# 2-atom Fe, 2-ionic-step relaxation fixture (tests/fixtures/vasp_isif7_fe2/,
+# committed OUTCAR/vasprun.xml/INCAR/POSCAR/CONTCAR, POTCAR intentionally
+# omitted for licensing reasons, consistent with vasp_outcar_fe_bcc/) rather
+# than a hand-written stand-in, since a hand-written dict is exactly what let
+# the bug through in the first place.
+
+FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "vasp_isif7_fe2"
+
+
+def test_construct_sequential_vasp_input_accepts_real_external_parser_dict():
+    real_output = external_parse_vasp_output(working_directory=str(FIXTURE_DIR))
+    assert isinstance(real_output, dict), (
+        "fixture-capture assumption broke upstream: vaspparser no longer "
+        "returns a dict"
+    )
+    assert set(real_output["structure"].keys()) >= {
+        "numbers",
+        "positions",
+        "cell",
+        "pbc",
+    }, "fixture-capture assumption broke upstream: structure dict shape changed"
+
+    incar = Incar.from_dict({"ISIF": 5})
+
+    run = pwf.node(construct_sequential_vasp_input).run(
+        vasp_output=real_output, incar=incar, potcar_paths=[]
+    )
+
+    result_structure = run.outputs.vasp_input.structure
+    assert isinstance(result_structure, AseAtoms)
+    assert len(result_structure) == 2 == len(real_output["structure"]["numbers"])
+    np.testing.assert_allclose(
+        np.array(result_structure.cell),
+        real_output["structure"]["cell"],
+        err_msg="the ase.Atoms cell must match the parser's final-structure cell exactly",
+    )
+
+
+def test_construct_sequential_vasp_input_rejects_unsupported_type():
+    """Anything that is neither a dict nor a DataFrame must fail loudly with
+    a clear TypeError naming both supported shapes, not silently return None
+    or raise some unrelated AttributeError deep inside pymatgen/ase."""
+    incar = Incar.from_dict({"ENCUT": 300})
+
+    with pytest.raises(TypeError, match="unsupported vasp_output type"):
+        pwf.node(construct_sequential_vasp_input).run(
+            vasp_output=["not", "a", "supported", "shape"],
+            incar=incar,
+            potcar_paths=[],
+        )

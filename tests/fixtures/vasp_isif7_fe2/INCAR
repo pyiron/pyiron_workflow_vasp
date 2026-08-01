@@ -1,0 +1,15 @@
+ENCUT = 200.0
+IBRION = 2
+ISIF = 7
+ISMEAR = 1
+ISPIN = 1
+KSPACING = 0.8
+LCHARG = False
+LREAL = Auto
+LWAVE = False
+NELM = 12
+NSW = 2
+POTIM = 0.3
+PREC = Low
+SIGMA = 0.2
+SYSTEM = struct_00000_7da6c043
