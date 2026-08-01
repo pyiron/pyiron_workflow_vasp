@@ -410,6 +410,44 @@ def check_convergence(
     return False
 
 
+# The documented vasp_job default: large, regenerable per-run VASP files
+# that most callers don't want to keep around across a big campaign.
+DEFAULT_CLEANUP_FILES = ("CHG", "CHGCAR", "WAVECAR")
+
+
+@fr.atomic("files_to_be_deleted")
+def resolve_cleanup_files(
+    files_to_be_deleted: Optional[list[str]] = None,
+) -> list[str]:
+    """Resolve ``vasp_job``'s ``files_to_be_deleted`` default.
+
+    ``None`` (vasp_job's default) is substituted with
+    ``DEFAULT_CLEANUP_FILES`` -- this is ``vasp_job``'s documented contract:
+    "clean up the large, regenerable files unless told otherwise". Pass
+    ``[]`` explicitly to keep everything instead.
+
+    This is DIFFERENT from :func:`pyiron_workflow_vasp.generic.
+    delete_files_recursively`'s own ``None`` handling, which treats ``None``
+    as "delete nothing" -- that is a defensive, low-level guard so the node
+    never raises `TypeError` from `file in None` when called directly or
+    with no cleanup list at all. The two meanings are intentional and must
+    stay distinct:
+
+        delete_files_recursively(files_to_be_deleted=None)  -> delete nothing
+        vasp_job(files_to_be_deleted=None)                  -> delete CHG/CHGCAR/WAVECAR
+
+    ``@fr.workflow``-decorated functions are parsed from their AST into a
+    graph and cannot contain a plain ``if x is None: x = [...]`` statement
+    with a non-empty list literal (the parser's assignment grammar only
+    accepts calls, empty-list accumulators, data access, and aliases on the
+    right-hand side) -- so this substitution has to be its own callable node
+    rather than an inline statement in ``vasp_job``.
+    """
+    if files_to_be_deleted is None:
+        return list(DEFAULT_CLEANUP_FILES)
+    return files_to_be_deleted
+
+
 @fr.workflow("vasp_output", "convergence_status")
 def vasp_job(
     workdir: str,
@@ -445,7 +483,10 @@ def vasp_job(
         vasp_input (VaspInput): VASP input object containing structure, INCAR, and POTCAR information.
         command (str, optional): Command to run VASP. Defaults to a specific module loading command.
         files_to_be_deleted (list[str], optional): List of files to delete after the calculation.
-            Defaults to ``None`` (nothing is deleted).
+            Defaults to ``None``, which is substituted with
+            ``["CHG", "CHGCAR", "WAVECAR"]`` (see ``DEFAULT_CLEANUP_FILES`` /
+            ``resolve_cleanup_files``) -- VASP's large, regenerable per-run
+            files. Pass ``[]`` explicitly to keep everything instead.
         compress (bool, optional): Whether to compress the output directory. Defaults to False.
         compressed_file_in_dir (bool, optional): Whether to place the compressed file in the output directory.
                                                 Defaults to False.
@@ -476,8 +517,9 @@ def vasp_job(
     # changes the execution model (e.g. separate executors without a shared
     # layer barrier) this ordering guarantee disappears silently; add an
     # explicit `after=convergence` edge if that assumption is ever relaxed.
+    cleanup_files = resolve_cleanup_files(files_to_be_deleted)
     wd_cleaned = delete_files_recursively(
-        wd_written, files_to_be_deleted, after=raw_output
+        wd_written, cleanup_files, after=raw_output
     )
     wd_archived = compress_directory(
         wd_cleaned, compress, compressed_file_in_dir, after=convergence

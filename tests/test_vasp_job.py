@@ -34,6 +34,21 @@ def stub_vasp_command(tmp_path):
     )
 
 
+@pytest.fixture
+def stub_vasp_command_full_output(tmp_path):
+    """Like ``stub_vasp_command``, but also produces CHG and WAVECAR -- the
+    full set of vasp_job's default cleanup targets -- so tests can assert
+    all three are gone while OUTCAR (not a cleanup target) survives."""
+    marker = "reached required accuracy - stopping structural energy minimisation"
+    return (
+        f"echo '{marker}' > vasp.log && "
+        f"echo '{marker}' > OUTCAR && "
+        f"echo 'charge' > CHGCAR && "
+        f"echo 'charge diff' > CHG && "
+        f"echo 'wavefunction' > WAVECAR"
+    )
+
+
 def test_vasp_job_runs_end_to_end(tmp_path, fe_structure, stub_vasp_command):
     workdir = str((tmp_path / "calc").resolve())
     incar = Incar.from_dict({"ENCUT": 300, "NSW": 0})
@@ -153,11 +168,21 @@ def test_vasp_job_graph_orders_cleanup_after_parse(fe_structure):
 
 
 def test_vasp_job_runs_without_files_to_be_deleted_argument(
-    tmp_path, fe_structure, stub_vasp_command
+    tmp_path, fe_structure, stub_vasp_command_full_output
 ):
-    """files_to_be_deleted defaults to None in vasp_job's signature, and
-    delete_files_recursively must tolerate that (treat it as "delete
-    nothing") rather than raising TypeError from `file in None`."""
+    """files_to_be_deleted defaults to None in vasp_job's signature. Unlike
+    delete_files_recursively's own None handling (defensive: treat None as
+    "delete nothing"), vasp_job's documented contract is "clean up the
+    large, regenerable files unless told otherwise" -- omitting the argument
+    must delete CHG, CHGCAR, and WAVECAR while leaving OUTCAR (not a cleanup
+    target) in place. See resolve_cleanup_files in vasp.py.
+
+    This is a scale-sensitive default: a real ASSYST campaign runs ~16
+    calculations per structure across thousands of structures, and
+    CHGCAR/WAVECAR are routinely tens to hundreds of MB each. Silently
+    keeping them (files_to_be_deleted=None meaning "delete nothing") would
+    fill a shared filesystem with no error or warning.
+    """
     workdir = str((tmp_path / "calc3").resolve())
     incar = Incar.from_dict({"ENCUT": 300, "NSW": 0})
 
@@ -167,7 +192,7 @@ def test_vasp_job_runs_without_files_to_be_deleted_argument(
     run = pwf.node(vasp_job).run(
         workdir=workdir,
         vasp_input=VaspInput(structure=fe_structure, incar=incar, potcar_paths=[]),
-        command=stub_vasp_command,
+        command=stub_vasp_command_full_output,
         compress=False,
         compressed_file_in_dir=False,
         remove_calc_dir=False,
@@ -177,6 +202,43 @@ def test_vasp_job_runs_without_files_to_be_deleted_argument(
 
     assert run.status == "finished"
     assert run.outputs.vasp_output["energy"] == -3.21
-    assert os.path.exists(os.path.join(workdir, "CHGCAR")), (
-        "with no files_to_be_deleted, nothing should have been cleaned up"
+    for gone in ("CHG", "CHGCAR", "WAVECAR"):
+        assert not os.path.exists(os.path.join(workdir, gone)), (
+            f"with files_to_be_deleted omitted, {gone} should be part of the "
+            "documented default cleanup and must be gone"
+        )
+    assert os.path.exists(os.path.join(workdir, "OUTCAR")), (
+        "OUTCAR is not a default cleanup target and must survive"
     )
+
+
+def test_vasp_job_explicit_empty_list_deletes_nothing(
+    tmp_path, fe_structure, stub_vasp_command_full_output
+):
+    """Passing files_to_be_deleted=[] EXPLICITLY must be distinguishable
+    from omitting the argument: [] means "clean up nothing", None means
+    "use the documented default cleanup list". Both must be reachable."""
+    workdir = str((tmp_path / "calc4").resolve())
+    incar = Incar.from_dict({"ENCUT": 300, "NSW": 0})
+
+    def fake_parser(directory):
+        return {"energy": -4.56}
+
+    run = pwf.node(vasp_job).run(
+        workdir=workdir,
+        vasp_input=VaspInput(structure=fe_structure, incar=incar, potcar_paths=[]),
+        command=stub_vasp_command_full_output,
+        files_to_be_deleted=[],
+        compress=False,
+        compressed_file_in_dir=False,
+        remove_calc_dir=False,
+        vasp_parser_function=fake_parser,
+        vasp_parser_args={"directory": workdir},
+    )
+
+    assert run.status == "finished"
+    assert run.outputs.vasp_output["energy"] == -4.56
+    for kept in ("CHG", "CHGCAR", "WAVECAR", "OUTCAR"):
+        assert os.path.exists(os.path.join(workdir, kept)), (
+            f"files_to_be_deleted=[] must keep everything, but {kept} is gone"
+        )
