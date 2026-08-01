@@ -67,17 +67,24 @@ def run_single(args: argparse.Namespace) -> None:
         potcar_paths=list(args.potcar) if args.potcar else None,
     )
 
-    job = vasp_job(
+    # vasp_job is a plain @fr.workflow-decorated function: calling it
+    # directly (rather than via pyiron_workflow.node(vasp_job).run(...))
+    # just executes the pipeline eagerly, as ordinary Python, and returns
+    # its (vasp_output, convergence_status) tuple immediately.
+    vasp_output, convergence_status = vasp_job(
         workdir=str(args.workdir),
         vasp_input=vasp_input,
         command=args.command,
     )
-    job.run()
 
-    print(f"converged: {job.outputs.convergence_status.value}")
-    out = job.outputs.to_value_dict()["vasp_output"]
-    if out is not None:
-        print(f"final energy: {out['generic']['energy_pot'][-1]:.6f} eV")
+    print(f"converged: {convergence_status}")
+    if vasp_output is not None:
+        # "energy_pot" is only populated when vasprun.xml was parsed; an
+        # OUTCAR-only run (vasprun.xml missing/disabled) only has
+        # "energy_tot" -- fall back rather than assume either is present.
+        generic = vasp_output["generic"]
+        energy = generic.get("energy_pot", generic.get("energy_tot"))
+        print(f"final energy: {energy[-1]:.6f} eV")
 
 
 def run_eos(args: argparse.Namespace) -> None:
@@ -104,15 +111,15 @@ def run_eos(args: argparse.Namespace) -> None:
             incar=incar,
             potcar_paths=list(args.potcar) if args.potcar else None,
         )
-        job = vasp_job(workdir=str(run_dir), vasp_input=vi, command=args.command)
-        job.run()
-
-        out = job.outputs.to_value_dict()["vasp_output"]
-        if out is None:
+        vasp_output, _convergence_status = vasp_job(
+            workdir=str(run_dir), vasp_input=vi, command=args.command
+        )
+        if vasp_output is None:
             print(f"[strain={strain:+.3f}] no output parsed; skipping")
             continue
-        volumes.append(out["generic"]["volume"][-1])
-        energies.append(out["generic"]["energy_pot"][-1])
+        generic = vasp_output["generic"]
+        volumes.append(generic["volume"][-1])
+        energies.append(generic.get("energy_pot", generic.get("energy_tot"))[-1])
 
     if not volumes:
         print("No converged points collected; nothing to fit.")

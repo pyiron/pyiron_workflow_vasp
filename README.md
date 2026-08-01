@@ -30,9 +30,10 @@ You also need a working `vasp_std` (or equivalent) binary on `$PATH` and a
 ## Dependencies
 
 - Python `>=3.10, <3.13`
-- `pyiron-workflow-atomistics >= 0.0.6` (Engine Protocol)
-- `pyiron-workflow >= 0.15.6`
-- `vaspparser >= 0.0.6` (POSCAR/INCAR/KPOINTS/POTCAR + vasprun parsing)
+- `pyiron-workflow-atomistics == 0.2.1` (Engine Protocol)
+- `pyiron-workflow == 0.19.0`
+- `flowrep == 0.6.2` (node/workflow decorators used throughout `vasp.py`/`generic.py`)
+- `vaspparser == 0.0.9` (POSCAR/INCAR/KPOINTS/POTCAR + vasprun parsing)
 - `ase`, `pymatgen`, `numpy`, `pandas`, `scipy`, `matplotlib`, `scikit-learn`
 
 Exact pins are tracked in [`.ci_support/environment.yml`](.ci_support/environment.yml).
@@ -60,19 +61,22 @@ engine = VaspEngine(
     command="mpirun -n 4 vasp_std",
 )
 
-# Direct execution — returns an EngineOutput dataclass
-output = pwa_engine.calculate.node_function(structure=structure, engine=engine)
+# Direct execution — pwa_engine.calculate is a plain, flowrep-decorated
+# function; calling it directly runs it immediately and returns an
+# EngineOutput dataclass.
+output = pwa_engine.calculate(structure=structure, engine=engine)
 
 print("converged:    ", output.converged)
 print("final energy: ", output.final_energy, "eV")
 print("final cell:   ", output.final_structure.get_cell())
 
-# ...or compose it into a pyiron_workflow graph
+# ...or wrap it as a pyiron_workflow Node for composition into a larger
+# graph — pwf.node(...).run(**kwargs) accepts arbitrary Python objects
+# (ase.Atoms, VaspEngine, ...) as runtime inputs, and its outputs are typed
+# ports you can wire into downstream nodes:
 import pyiron_workflow as pwf
-wf = pwf.Workflow("fe_relax")
-wf.relax = pwa_engine.calculate(structure=structure, engine=engine)
-wf.run()
-print(wf.relax.outputs.engine_output.value.final_energy)
+result = pwf.node(pwa_engine.calculate).run(structure=structure, engine=engine)
+print(result.outputs.engine_output.final_energy)
 ```
 
 ### Swapping engines
@@ -96,7 +100,7 @@ from ase.calculators.emt import EMT
 engine = pwa_engine.ASEEngine(EngineInput=pwa_engine.CalcInputMinimize(), calculator=EMT())
 
 # Same call site for all three:
-output = pwa_engine.calculate.node_function(structure=structure, engine=engine)
+output = pwa_engine.calculate(structure=structure, engine=engine)
 ```
 
 This is the whole point of the Engine Protocol — physics workflows
@@ -113,6 +117,12 @@ for the follow-up plan.
 The original `VaspInput` / `vasp_job` helpers still ship for users with
 existing scripts:
 
+`vasp_job` is a plain `flowrep`-decorated workflow function, not a class
+with a `.run()` method — calling it directly executes the whole pipeline
+(write inputs, run VASP, parse output, clean up) synchronously and returns
+a `(vasp_output, convergence_status)` tuple. This is also exactly the call
+shape `pyiron_workflow_assyst` uses in production:
+
 ```python
 from ase.build import bulk
 from pymatgen.io.vasp.inputs import Incar
@@ -123,12 +133,35 @@ incar = Incar.from_dict({
     "ENCUT": 400, "ISMEAR": 1, "SIGMA": 0.1, "ISPIN": 2, "MAGMOM": "2*3.0",
 })
 
+# potcar_paths defaults to None, which auto-resolves against
+# ~/.pyiron_vasp_config (see "VASP Configuration" below); pass explicit
+# paths here to bypass that lookup.
 vasp_input = VaspInput(structure=structure, incar=incar)
-job = vasp_job(workdir="./bulk_fe_run", vasp_input=vasp_input)
-job.run()
 
-print("converged:", job.outputs.convergence_status.value)
+vasp_output, convergence_status = vasp_job(
+    workdir="./bulk_fe_run",
+    vasp_input=vasp_input,
+    command="mpirun -n 4 vasp_std",
+)
+
+print("converged:", convergence_status)
+if vasp_output is not None:
+    # "energy_pot" is only populated when vasprun.xml was parsed; an
+    # OUTCAR-only run (vasprun.xml missing/disabled) only has "energy_tot".
+    generic = vasp_output["generic"]
+    energies = generic.get("energy_pot", generic.get("energy_tot"))
+    print("final energy:", energies[-1], "eV")
 ```
+
+`files_to_be_deleted` (an optional keyword argument not shown above)
+defaults to `None`, which is substituted with `["CHG", "CHGCAR", "WAVECAR"]`
+— VASP's large, regenerable per-run files. Pass `[]` explicitly if you want
+to keep everything.
+
+Prefer `pwf.node(vasp_job).run(...)` (see the `VaspEngine` example above)
+instead of the direct call shown here if you want a typed `pyiron_workflow`
+Node — e.g. to compose `vasp_job` into a larger graph, inspect its execution
+status, or use an executor.
 
 New code should prefer the `VaspEngine` API — it composes with the
 Protocol-aware physics nodes in `pyiron_workflow_atomistics`.

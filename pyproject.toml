@@ -32,18 +32,25 @@ dependencies = [
     # Strict ==-pins match .ci_support/environment.yml. The pyiron-actions
     # release workflow rewrites these to >=lower,<upper ranges (semantic
     # upper bound = minor) before publishing the wheel.
+    #
+    # pyiron-workflow-atomistics==0.2.1 requires pyiron-workflow==0.19.0
+    # exactly, plus floors on matplotlib (>=3.11.1), tqdm (>=4.68.0), and
+    # pyiron_snippets (>=1.3.0) that the previous (0.15.6-era) pins here
+    # violate; those three are bumped to the lowest versions that satisfy
+    # both pyiron-workflow's and pyiron-workflow-atomistics' ranges.
     "numpy==1.26.4",
     "pandas==3.0.0",
-    "matplotlib==3.10.9",
+    "matplotlib==3.11.1",
     "ase==3.27.0",
     "scipy==1.17.0",
-    "pyiron-workflow==0.15.6",
-    "pyiron-workflow-atomistics==0.0.6",
-    "vaspparser==0.0.6",
+    "pyiron-workflow==0.19.0",
+    "pyiron-workflow-atomistics==0.2.1",
+    "vaspparser==0.0.9",
+    "flowrep==0.6.2",
     "pymatgen==2026.5.4",
-    "pyiron_snippets==1.2.1",
+    "pyiron_snippets==1.4.0",
     "scikit-learn==1.8.0",
-    "tqdm==4.67.3",
+    "tqdm==4.70.0",
 ]
 
 [project.optional-dependencies]
@@ -142,3 +149,5 @@ addopts = "-ra -q --cov=pyiron_workflow_vasp"
 testpaths = [
     "tests",
 ]
+filterwarnings = ["error::SyntaxWarning"]
+markers = ["integration: requires a real VASP binary (set ASSYST_VASP_BINARY)"]

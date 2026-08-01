@@ -45,9 +45,10 @@ def run_vasp(
     """
     from vaspparser.vasp.output import parse_vasp_output
 
-    from pyiron_workflow_vasp.generic import shell
+    from pyiron_workflow_vasp.generic import run_shell
     from pyiron_workflow_vasp.vasp import (
         VaspInput,
+        _default_POTCAR_library_path,
         get_default_POTCAR_paths,
         read_potcar_config,
         write_INCAR,
@@ -69,12 +70,23 @@ def run_vasp(
     kpoints = _build_kpoints(structure=structure, kpoints_density=kpoints_density)
     write_KPOINTS(workdir=working_directory, kpoints=kpoints)
 
-    # 4. POTCAR - resolve via potcar_config_file
+    # 4. POTCAR - resolve via potcar_config_file if given, else fall back to
+    #    the same lazy ~/.pyiron_vasp_config / PYIRON_VASP_CONFIG resolution
+    #    every other POTCAR-path lookup in this package uses.
+    #
+    #    read_potcar_config returns "default_POTCAR_path" (see vasp.py) --
+    #    a prior version of this line read "default_POTCAR_library_path",
+    #    a key that dict never had, so passing potcar_config_file always
+    #    raised KeyError. And a prior version of the else-branch passed
+    #    pseudopot_lib_path=None straight through to get_default_POTCAR_paths,
+    #    which crashes on os.path.join(None, ...) -- so the "auto-resolve
+    #    from ~/.pyiron_vasp_config" default path (VaspEngine's most common
+    #    usage, with no explicit potcar_config_file) never worked either.
     if potcar_config_file is not None:
         config = read_potcar_config(potcar_config_file)
-        pseudopot_lib_path = config["default_POTCAR_library_path"]
+        pseudopot_lib_path = config["default_POTCAR_path"]
     else:
-        pseudopot_lib_path = None
+        pseudopot_lib_path = _default_POTCAR_library_path()
 
     potcar_paths = get_default_POTCAR_paths(
         structure=structure,
@@ -83,14 +95,16 @@ def run_vasp(
     )
     vasp_input = VaspInput(
         structure=structure,
+        incar=incar,
         potcar_paths=potcar_paths,
         pseudopot_lib_path=pseudopot_lib_path,
         pseudopot_functional=functional,
     )
     write_POTCAR(workdir=working_directory, vasp_input=vasp_input)
 
-    # 5. Run the binary - shell is a pyiron_workflow Node; use the raw callable
-    shell.node_function(command=command, workdir=working_directory)
+    # 5. Run the binary - run_shell is a plain flowrep-decorated function,
+    #    directly callable (no `.node_function` indirection needed).
+    run_shell(command=command, workdir=working_directory)
 
     # 6. Parse the output
     parsed = parse_vasp_output(working_directory=working_directory)
@@ -179,10 +193,29 @@ def _to_engine_output(parsed: dict) -> EngineOutput:
                 ASEAtoms(symbols=symbols, positions=p, cell=c, pbc=True)
             )
 
-    final_structure = (
-        structures_traj[-1] if structures_traj else parsed.get("final_structure")
-    )
+    # Fall back to the top-level "structure" key (an ase.Atoms.todict()-shaped
+    # dict -- see vaspparser.vasp.output.Output.to_dict) when no per-step
+    # trajectory could be reconstructed above. A prior version looked for
+    # "final_structure", a key parse_vasp_output's return value has never
+    # had (real key: "structure"), so this fallback silently always
+    # returned None -- EngineOutput.final_structure was always None on
+    # every VaspEngine run, live or otherwise.
+    if structures_traj:
+        final_structure = structures_traj[-1]
+    elif parsed.get("structure") is not None:
+        final_structure = ASEAtoms.fromdict(parsed["structure"])
+    else:
+        final_structure = None
     final_energy = energies[-1] if energies else parsed.get("final_total_energy")
+    # NOTE: parse_vasp_output's return dict has no top-level "converged" key
+    # (see Output.to_dict: description/generic/structure/electrostatic_
+    # potential/charge_density/electronic_structure/outcar), so this always
+    # evaluates to False today. Left as a known gap -- convergence detection
+    # for VaspEngine would need to read an ionic-convergence marker out of
+    # parsed["outcar"] or vasprun.xml directly, the same way
+    # pyiron_workflow_vasp.vasp.check_convergence does for vasp_job. Not
+    # fixed here: out of scope for this pass, which targeted the crash-
+    # causing bugs blocking any execution at all (see report).
     converged = bool(parsed.get("converged", False))
 
     return EngineOutput(

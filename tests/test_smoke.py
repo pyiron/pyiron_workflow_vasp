@@ -23,7 +23,7 @@ def test_package_imports_without_config():
     """The package must import even when no config file is on disk."""
     import pyiron_workflow_vasp  # noqa: F401
     from pyiron_workflow_vasp.vasp import VaspInput, vasp_job  # noqa: F401
-    from pyiron_workflow_vasp.generic import shell, isLineInFile  # noqa: F401
+    from pyiron_workflow_vasp.generic import run_shell, is_line_in_file  # noqa: F401
 
 
 def test_lazy_config_raises_only_on_use():
@@ -123,33 +123,36 @@ def test_stack_element_string_groups_contiguous_runs():
 
 
 def test_is_line_in_file_finds_substring(tmp_path: Path):
-    from pyiron_workflow_vasp.generic import isLineInFile
+    from pyiron_workflow_vasp.generic import is_line_in_file
 
     f = tmp_path / "log.txt"
     f.write_text("alpha\nbeta gamma delta\nepsilon\n")
 
-    assert isLineInFile.node_function(filepath=str(f), line="gamma", exact_match=False)
+    assert is_line_in_file(filepath=str(f), line="gamma", exact_match=False)
     # exact_match requires the whole line to match the stripped target
-    assert not isLineInFile.node_function(filepath=str(f), line="gamma", exact_match=True)
-    assert isLineInFile.node_function(filepath=str(f), line="beta gamma delta", exact_match=True)
+    assert not is_line_in_file(filepath=str(f), line="gamma", exact_match=True)
+    assert is_line_in_file(filepath=str(f), line="beta gamma delta", exact_match=True)
 
 
 def test_is_line_in_file_missing_file_returns_false(tmp_path: Path):
-    from pyiron_workflow_vasp.generic import isLineInFile
+    from pyiron_workflow_vasp.generic import is_line_in_file
 
-    assert not isLineInFile.node_function(
+    assert not is_line_in_file(
         filepath=str(tmp_path / "no_such_file"), line="x", exact_match=False
     )
 
 
-def test_shell_restores_cwd_on_exception(tmp_path: Path, monkeypatch):
-    """shell() must restore cwd even if the subprocess errors out."""
-    import os
+def test_run_shell_propagates_subprocess_exceptions(tmp_path: Path, monkeypatch):
+    """run_shell must not swallow an exception raised by subprocess.run.
+
+    (This package no longer chdirs around the subprocess call at all -- see
+    test_generic.py::test_run_shell_concurrent_calls_preserve_process_cwd for
+    the regression test covering the removed, thread-unsafe os.chdir --
+    so there is no cwd-restore behaviour left to assert on here.)
+    """
     import subprocess
 
-    from pyiron_workflow_vasp.generic import shell
-
-    original = os.getcwd()
+    from pyiron_workflow_vasp.generic import run_shell
 
     def boom(*_args, **_kwargs):
         raise RuntimeError("simulated subprocess failure")
@@ -157,6 +160,4 @@ def test_shell_restores_cwd_on_exception(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", boom)
 
     with pytest.raises(RuntimeError):
-        shell.node_function(command="true", workdir=str(tmp_path))
-
-    assert os.getcwd() == original
+        run_shell(command="true", workdir=str(tmp_path))

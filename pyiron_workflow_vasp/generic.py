@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
-from typing import Optional
 import tarfile
-import fnmatch
 import shutil
 import subprocess
+from typing import Optional
+
 from pyiron_snippets.logger import logger
 
-from pyiron_workflow import Workflow
+import flowrep as fr
 
 
 class Storage:
@@ -32,7 +32,7 @@ class ShellOutput(Storage):
     return_code: int
     dump: FileObject  # TODO: should be done in a specific lammps object
     log: FileObject
-    
+
 class VarType:
     def __init__(
         self,
@@ -73,9 +73,10 @@ class FileObject:
     @property
     def name(self):
         return self._path.name
-    
-@Workflow.wrap.as_function_node("output")
-def shell(
+
+
+@fr.atomic("output")
+def run_shell(
     command: str,
     workdir: str | None = None,
     environment: Optional[dict[str, str]] = None,
@@ -96,6 +97,19 @@ def shell(
 
     Returns:
         ShellOutput: Object containing stdout, stderr, and return code.
+
+    Note:
+        Deliberately does NOT call ``os.chdir``: ``subprocess.run``'s ``cwd``
+        argument already scopes the child process to ``workdir``, and mutating
+        the parent's working directory is unsafe now that pyiron_workflow 0.19
+        evaluates sibling nodes in a DAG layer on separate threads by default.
+        A prior version saved/restored ``os.getcwd()`` around a real
+        ``os.chdir`` call; under concurrent execution that save/restore pair
+        races (thread B can capture thread A's workdir as "the directory to
+        restore to"), corrupting the *process* cwd for the remainder of the
+        run. Measured at 27/30 trials. ``logger.info`` below logs ``workdir``
+        directly instead of ``os.getcwd()`` since that was the only reason the
+        old code queried/changed the process cwd at all.
     """
     if environment is None:
         environment = {}
@@ -109,21 +123,15 @@ def shell(
     # command line here.
     full_command = " ".join([command, *map(str, arguments)]) if arguments else command
 
-    curr_dir = os.getcwd()
-    try:
-        if workdir is not None:
-            os.chdir(workdir)
-        logger.info(f"shell is in {os.getcwd()}")
-        proc = subprocess.run(
-            full_command,
-            capture_output=True,
-            cwd=workdir,
-            encoding="utf8",
-            env=environ,
-            shell=True,
-        )
-    finally:
-        os.chdir(curr_dir)
+    logger.info(f"run_shell: workdir={workdir}")
+    proc = subprocess.run(
+        full_command,
+        capture_output=True,
+        cwd=workdir,
+        encoding="utf8",
+        env=environ,
+        shell=True,
+    )
 
     output = ShellOutput()
     output.stdout = proc.stdout
@@ -131,18 +139,19 @@ def shell(
     output.return_code = proc.returncode
     return output
 
-@Workflow.wrap.as_function_node("line_found")
-def isLineInFile(filepath: str, line: str, exact_match: bool = True) -> bool:
+
+@fr.atomic("line_found")
+def is_line_in_file(filepath: str, line: str, exact_match: bool = True) -> bool:
     """
     Check if a specific line exists in a file.
-    
+
     Args:
         filepath (str): Path to the file to search in.
         line (str): The line to search for.
-        exact_match (bool, optional): If True, the line must match exactly. If False, 
-                                     the line can be a substring of any line in the file. 
+        exact_match (bool, optional): If True, the line must match exactly. If False,
+                                     the line can be a substring of any line in the file.
                                      Defaults to True.
-    
+
     Returns:
         bool: True if the line is found, False otherwise.
     """
@@ -160,15 +169,33 @@ def isLineInFile(filepath: str, line: str, exact_match: bool = True) -> bool:
         logger.info(f"File '{filepath}' not found.")
     return line_found
 
-@Workflow.wrap.as_function_node("workdir")
-def delete_files_recursively(workdir: str, files_to_be_deleted: list[str]):
+
+@fr.atomic("workdir")
+def delete_files_recursively(
+    workdir: str, files_to_be_deleted: list[str] | None = None, after: object = None
+) -> str:
     """
     Recursively delete specific files in a directory and its subdirectories.
 
     Args:
         workdir (str): The directory to search for files.
-        files_to_be_deleted (list[str]): List of filenames to delete.
+        files_to_be_deleted (list[str] | None): List of filenames to delete.
+            ``None`` is treated as an empty list (nothing to delete) rather
+            than raising -- a defensive, low-level guard for direct or
+            standalone callers of this node. ``vasp_job`` (``vasp.py``) does
+            NOT rely on this fallback: its ``resolve_cleanup_files`` node
+            intercepts a ``None`` ``files_to_be_deleted`` before this
+            function ever sees it and substitutes the documented default
+            cleanup list (``["CHG", "CHGCAR", "WAVECAR"]``) instead.
+        after: An ordering token. It is never read, but accepting it lets a
+            caller create a data edge that forces this node to run after
+            another. pyiron_workflow 0.19 has no execution signals, so
+            ordering must come from data flow.
+
+    Returns:
+        str: ``workdir``, unchanged, so the value can be threaded onward.
     """
+    files_to_be_deleted = files_to_be_deleted or []
     if not os.path.isdir(workdir):
         logger.info(f"Error: {workdir} is not a valid directory.")
     else:
@@ -183,145 +210,87 @@ def delete_files_recursively(workdir: str, files_to_be_deleted: list[str]):
                         logger.info(f"Error deleting {file_path}: {e}")
     return workdir
 
-@Workflow.wrap.as_function_node("compressed_file")
+
+@fr.atomic("directory_path")
 def compress_directory(
     directory_path: str,
-    exclude_files=[],
-    exclude_file_patterns=[],
-    print_message=True,
-    inside_dir=True,
-    actually_compress=True,
-):
+    actually_compress: bool = True,
+    inside_dir: bool = True,
+    exclude_files: list[str] | None = None,
+    after: object = None,
+) -> str:
     """
-    Compresses a directory and its contents into a tarball with gzip compression.
+    Compress ``directory_path`` to a gzipped tarball, returning the directory.
 
-    Parameters:
+    Args:
         directory_path (str): The path of the directory to compress.
-        exclude_files (list, optional): A list of filenames to exclude from the compression. Defaults to an empty list.
-        exclude_file_patterns (list, optional): A list of file patterns (glob patterns) to match against filenames and exclude from the compression. Defaults to an empty list.
-        print_message (bool, optional): Determines whether to print a message indicating the compression. Defaults to True.
-        inside_dir (bool, optional): Determines whether the output tarball should be placed inside the source directory or in the same directory as the source directory. Defaults to True.
+        actually_compress (bool, optional): If False, this is a no-op that
+            just returns ``directory_path``. Defaults to True.
+        inside_dir (bool, optional): Whether the output tarball should be
+            placed inside the source directory or alongside it. Defaults to
+            True.
+        exclude_files (list[str] | None, optional): Filenames to exclude from
+            the compression. Defaults to None.
+        after: An ordering token; see :func:`delete_files_recursively`.
 
-    Usage:
-        # Compress a directory and place the resulting tarball inside the directory
-        compress_directory("/path/to/source_directory")
-
-        # Compress a directory and place the resulting tarball in the same directory as the source directory
-        compress_directory("/path/to/source_directory", inside_dir=False)
-
-        # Compress a directory and exclude specific files from the compression
-        compress_directory("/path/to/source_directory", exclude_files=["file1.txt", "file2.jpg"])
-
-        # Compress a directory and exclude files matching specific file patterns from the compression
-        compress_directory("/path/to/source_directory", exclude_file_patterns=["*.txt", "*.log"], inside_dir=False)
+    Returns:
+        str: ``directory_path``, unchanged. Returning the directory rather
+        than the tarball lets the value be threaded onward to establish
+        ordering.
 
     Note:
-        - The function creates a tarball with gzip compression of the directory and its contents.
-        - The resulting tarball will be placed either inside the source directory (if inside_dir is True) or in the same directory as the source directory (if inside_dir is False).
-        - Files specified in the `exclude_files` list and those matching the `exclude_file_patterns` will be excluded from the compression.
-        - The `print_message` parameter controls whether a message indicating the compression is printed. By default, it is set to True.
-    """
-    if actually_compress:
-        if inside_dir:
-            output_file = os.path.join(
-                directory_path, os.path.basename(directory_path) + ".tar.gz"
-            )
-        else:
-            output_file = os.path.join(
-                os.path.dirname(directory_path),
-                os.path.basename(directory_path) + ".tar.gz",
-            )
-        with tarfile.open(output_file, "w:gz") as tar:
-            for root, _, files in os.walk(directory_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    # Exclude the output tarball from being added
-                    if file_path == output_file:
-                        continue
-                    if any(
-                        fnmatch.fnmatch(file, pattern) for pattern in exclude_file_patterns
-                    ):
-                        continue
-                    if file in exclude_files:
-                        continue
-                    arcname = os.path.join(
-                        os.path.basename(directory_path),
-                        os.path.relpath(file_path, directory_path),
-                    )
-                    tar.add(file_path, arcname=arcname)
-                    # tar.add(file_path, arcname=os.path.relpath(file_path, directory_path))
-                    # print(f"{file} added")
-        if print_message:
-            logger.info(f"compress_directory: compressed directory at {directory_path}")
-    else:
-        output_file = None
-        logger.info(f"compress_directory: no compression")
-    return output_file
-    
-def submit_to_slurm(
-    node,
-    /,
-    job_name=None,
-    output_file=None,
-    error_file=None,
-    time_limit="00:05:00",
-    partition="s.cmmg",
-    nodes=1,
-    ntasks=1,
-    cpus_per_task=1,
-    memory="1GB",
-):
-    """
-    An example of a helper function for running nodes on slurm.
+        Archive members are rooted under the directory's basename (e.g.
+        ``calc/OUTCAR``, not bare ``OUTCAR``), matching every archive produced
+        by this package historically. Extracting an archive from any campaign
+        -- old or new -- therefore lands files under the same
+        ``<basename>/...`` prefix instead of flat into the current directory.
 
-    - Saves the node
-    - Writes a slurm batch script that 
-        - Loads the node
-        - Runs it
-        - Saves it again
-    - Runs the batch script
+        Self-exclusion of the output tarball compares the FULL path, not the
+        bare filename: a legitimate user file living in a subdirectory but
+        sharing the tarball's basename (e.g. ``calc/sub/calc.tar.gz``) must
+        not be dropped from the archive just because its name matches --
+        especially since ``remove_calc_dir=True`` may delete the source
+        directory immediately afterward.
     """
-    if node.graph_root is not node:
-        raise ValueError(
-            f"Can only submit parent-most nodes, but {node.full_label} "
-            f"has root {node.graph_root.full_label}"
-        )
-        
-    node.save(backend="pickle")
-    p = node.as_path()
-    
-    if job_name is None:
-        job_name = node.full_label 
-        job_name = job_name.replace(node.lexical_delimiter, "_")
-        job_name = "pwf" + job_name
-        
-    script_content = f"""#!/bin/bash
-#SBATCH --job-name={job_name} 
-#SBATCH --output={p.joinpath("slurm.out").resolve() if output_file is None else output_file}
-#SBATCH --error={p.joinpath("slurm.err").resolve() if error_file is None else error_file}
-#SBATCH --time={time_limit}
-#SBATCH --partition={partition}
-#SBATCH --nodes={nodes}
-#SBATCH --ntasks={ntasks}
-#SBATCH --cpus-per-task={cpus_per_task}
-#SBATCH --mem={memory}
+    if not actually_compress:
+        return directory_path
+    exclude = set(exclude_files or [])
+    base = os.path.basename(os.path.normpath(directory_path))
+    target_dir = directory_path if inside_dir else os.path.dirname(directory_path)
+    tar_path = os.path.join(target_dir, f"{base}.tar.gz")
+    with tarfile.open(tar_path, "w:gz") as tar:
+        for root, _, files in os.walk(directory_path):
+            for file in files:
+                full = os.path.join(root, file)
+                if file in exclude or full == tar_path:
+                    continue
+                tar.add(
+                    full,
+                    arcname=os.path.join(base, os.path.relpath(full, directory_path)),
+                )
+    logger.info(f"compress_directory: compressed directory at {directory_path}")
+    return directory_path
 
-# Execute Python script inline
-python - <<EOF
-from pyiron_workflow import PickleStorage
-node = PickleStorage().load(filename="{node.as_path().joinpath('picklestorage').resolve()}")  # Load
-node.run()  # Run
-node.save(backend="pickle")  # Save again
-EOF
-"""
-    submission_script = p.joinpath("node_submission.sh")
-    submission_script.write_text(script_content)
-    import subprocess
-    submission = subprocess.run(["sbatch", submission_script.resolve()])
-    return submission
-    
-@Workflow.wrap.as_function_node("compressed_file")
-def remove_dir(directory_path, actually_remove=False):
+
+@fr.atomic("payload")
+def remove_directory(
+    directory_path: str, actually_remove: bool = False, payload: object = None
+) -> object:
+    """
+    Optionally delete ``directory_path``, forwarding ``payload`` unchanged.
+
+    Args:
+        directory_path (str): Directory to (maybe) remove.
+        actually_remove (bool, optional): If True, ``directory_path`` is
+            deleted (ignoring missing-directory errors). Defaults to False.
+        payload: Arbitrary value passed straight through. Any consumer of the
+            returned payload is necessarily ordered after the removal, which
+            is how the "remove last" guarantee is preserved without execution
+            signals.
+
+    Returns:
+        object: ``payload``, unchanged.
+    """
     if actually_remove:
         shutil.rmtree(directory_path, ignore_errors=True)
-    return directory_path
+    return payload
