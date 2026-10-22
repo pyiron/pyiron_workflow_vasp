@@ -6,6 +6,15 @@ versioning: PEP 440.
 
 ## [0.2.1] - Unreleased
 
+### Added
+
+- Python 3.14 support: `requires-python` is now `>=3.11, <3.15` (was
+  `<3.14`), with the 3.14 classifier, a 3.14 leg in the clean-install matrix
+  and in push-pull (`python-version-alt3`). The full suite passes on CPython
+  3.14.3 with every runtime dependency installed from PyPI wheels. Installing
+  on 3.14 needs `pyiron-workflow-atomistics>=0.2.4`, the first release that
+  allows 3.14; the published floor stays at 0.2.2 for 3.11-3.13.
+
 ### Fixed
 
 - The sdist now includes the complete test suite. 0.2.0's sdist shipped only
