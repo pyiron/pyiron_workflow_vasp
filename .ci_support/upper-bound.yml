@@ -7,6 +7,7 @@ channels:
 dependencies:
   - flowrep =0.7.0
   - monty =2027.0.0  # calendar-versioned; the default minor cap would be one month
+  - pymatgen =2027.0.0  # calendar-versioned, as above
   - pyiron_snippets =2.0.0
   - pyiron_workflow =0.21.0
   - vaspparser =0.1.0
