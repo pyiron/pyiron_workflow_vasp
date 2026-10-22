@@ -11,3 +11,4 @@ htmlcov/
 .ipynb_checkpoints/
 .venv/
 .env
+pyiron.log
