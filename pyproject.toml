@@ -13,6 +13,7 @@ description = "A VASP workflow integration package for pyiron"
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
 license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 authors = [
     { name = "pyiron Team", email = "pyiron@mpie.de" }
 ]
