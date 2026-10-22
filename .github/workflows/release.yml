@@ -1,7 +1,9 @@
 name: Release
 
 on:
-#  pull_request:
+  # PRs run the dependency rewrite + build as a preview; only a published
+  # release uploads to PyPI (publish-to-pypi below).
+  pull_request:
   release:
     types: [ published ]
 
@@ -16,3 +18,4 @@ jobs:
       lower-bound-yaml: '.ci_support/lower-bound.yml'
       upper-bound-yaml: '.ci_support/upper-bound.yml'
       pypi-to-conda-name-map-file: '.github/actions/.support/pypi_vs_conda_names.json'
+      publish-to-pypi: ${{ github.event_name == 'release' && github.event.action == 'published' }}
