@@ -31,7 +31,7 @@ You also need a working `vasp_std` (or equivalent) binary on `$PATH` and a
 
 Published ranges (the release rewrites the `==` CI pins into these):
 
-- Python `>=3.11, <3.14`
+- Python `>=3.11, <3.15`
 - `pyiron-workflow-atomistics >=0.2.2, <0.3` (Engine Protocol)
 - `pyiron-workflow >=0.19, <0.21`
 - `flowrep >=0.6, <0.7` (node/workflow decorators used throughout `vasp.py`/`generic.py`)

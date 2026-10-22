@@ -1,0 +1,6 @@
+# setuptools' defaults only pick up tests/test_*.py; graft the whole suite
+# (conftest.py, unit/, integration/, fixtures/ data) so the sdist is testable.
+include LICENSE README.md CHANGELOG.md
+graft tests
+global-exclude __pycache__ *.py[cod]
+exclude pyiron.log

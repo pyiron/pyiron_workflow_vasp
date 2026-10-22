@@ -4,6 +4,28 @@ All notable changes to `pyiron_workflow_vasp` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: PEP 440.
 
+## [0.2.1] - Unreleased
+
+### Added
+
+- Python 3.14 support: `requires-python` is now `>=3.11, <3.15` (was
+  `<3.14`), with the 3.14 classifier, a 3.14 leg in the clean-install matrix
+  and in push-pull (`python-version-alt3`). The full suite passes on CPython
+  3.14.3 with every runtime dependency installed from PyPI wheels. Installing
+  on 3.14 needs `pyiron-workflow-atomistics>=0.2.4`, the first release that
+  allows 3.14; the published floor stays at 0.2.2 for 3.11-3.13.
+
+### Fixed
+
+- The sdist now includes the complete test suite. 0.2.0's sdist shipped only
+  the `tests/test_*.py` files setuptools picks up by default, without
+  `tests/conftest.py`, `tests/unit/`, `tests/integration/` or the
+  `tests/fixtures/` OUTCAR/POSCAR/CONTCAR data, so running the tests from the
+  unpacked sdist gave 5 failures and 22 errors. A new `MANIFEST.in` grafts
+  `tests/` (and includes `CHANGELOG.md`); the wheel still ships no tests.
+  The clean-install CI's sdist leg now runs the suite from the extracted
+  sdist's own `tests/` directory so this cannot regress.
+
 ## [0.2.0] - 2026-10-22
 
 Ports `vasp.py`/`generic.py` from `pyiron_workflow`'s pre-0.19

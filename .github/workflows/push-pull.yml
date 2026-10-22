@@ -11,9 +11,11 @@ jobs:
     uses: pyiron/actions/.github/workflows/push-pull.yml@actions-4.0.8
     with:
       runner: 'ubuntu-22.04'
-      # pandas wheels start at python 3.11; exclude the 3.10 and 3.9 legs
+      # pandas wheels start at python 3.11, so the default 3.10 (alt2) leg is
+      # excluded; alt3 (default 3.9) is repurposed for the newest supported
+      # python. The main leg is 3.12 and alt1 defaults to 3.11.
       python-version-alt2: 'exclude'
-      python-version-alt3: 'exclude'
+      python-version-alt3: '3.14'
       runner-alt1: 'exclude'
       # The ligerzero-ai org does not define DEPENDABOT_WORKFLOW_TOKEN; the
       # commit-updated-env job's checkout step fails for lack of the secret.
