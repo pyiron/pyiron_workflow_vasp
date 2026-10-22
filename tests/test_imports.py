@@ -1,8 +1,10 @@
 import pyiron_workflow as pwf
 
 
-def test_pyiron_workflow_is_019():
-    assert pwf.__version__.startswith("0.19")
+def test_pyiron_workflow_in_supported_range():
+    # Matches the >=0.19,<0.21 range published from .ci_support/*-bound.yml
+    major_minor = tuple(int(part) for part in pwf.__version__.split(".")[:2])
+    assert (0, 19) <= major_minor < (0, 21)
 
 
 def test_package_imports_without_pyiron_workflow_legacy_api():

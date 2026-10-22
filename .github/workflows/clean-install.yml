@@ -1,0 +1,87 @@
+# Build the sdist and wheel in isolation and check that each installs into a
+# fresh venv (no conda env, no pre-installed deps, no --no-build-isolation)
+# and passes the test suite run from outside the checkout. Complements the
+# conda-based push-pull workflow, which tests the source tree.
+name: Clean install
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # versioneer needs the tags to compute the version
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check --strict dist/*
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  install-and-test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+        dist: ['wheel', 'sdist']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: ${{ runner.temp }}/dist
+      - name: Install the ${{ matrix.dist }} into a fresh venv
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m venv venv
+          if [ "${{ matrix.dist }}" = wheel ]; then
+            artifact=$(ls dist/*.whl)
+          else
+            artifact=$(ls dist/*.tar.gz)
+          fi
+          venv/bin/python -m pip install --upgrade pip
+          venv/bin/python -m pip install "${artifact}[test]"
+          venv/bin/python -m pip check
+      - name: Import the installed package
+        working-directory: ${{ runner.temp }}
+        run: |
+          venv/bin/python - <<'EOF'
+          from pathlib import Path
+
+          import pyiron_workflow_vasp as pwv
+
+          print(pwv.__file__, pwv.__version__)
+          assert "site-packages" in pwv.__file__, pwv.__file__
+          assert pwv.__version__ != "0+unknown", pwv.__version__
+          resources = Path(pwv.__file__).parent / "vasp_resources"
+          csvs = sorted(p.name for p in resources.glob("*.csv"))
+          print(csvs)
+          # read at runtime by vasp._default_POTCAR_specification_csv
+          assert len(csvs) == 4, csvs
+          EOF
+      - name: Run the tests against the installed package
+        run: |
+          testroot="${{ runner.temp }}/testrun"
+          mkdir -p "$testroot"
+          # pyproject.toml carries the pytest config; no package source is copied
+          cp -r tests pyproject.toml "$testroot"/
+          cd "$testroot"
+          ../venv/bin/python -m pytest tests

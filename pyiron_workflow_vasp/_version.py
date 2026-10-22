@@ -51,7 +51,7 @@ def get_config() -> VersioneerConfig:
     cfg.VCS = "git"
     cfg.style = "pep440-pre"
     cfg.tag_prefix = "pyiron_workflow_vasp-"
-    cfg.parentdir_prefix = "pyiron_workflow_vasp"
+    cfg.parentdir_prefix = "pyiron_workflow_vasp-"
     cfg.versionfile_source = "pyiron_workflow_vasp/_version.py"
     cfg.verbose = False
     return cfg

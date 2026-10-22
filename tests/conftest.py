@@ -13,6 +13,14 @@ from pathlib import Path
 import pytest
 
 
+def pytest_configure(config):
+    # Mirrors [tool.pytest.ini_options] markers, so a copy of tests/ run
+    # against an installed wheel (as in clean-install CI) knows the marker too.
+    config.addinivalue_line(
+        "markers", "integration: requires a real VASP binary (set ASSYST_VASP_BINARY)"
+    )
+
+
 @pytest.fixture(autouse=True)
 def _point_config_at_nonexistent(monkeypatch):
     """Force every test to import the package as if no config existed.

@@ -4,7 +4,7 @@ All notable changes to `pyiron_workflow_vasp` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning: PEP 440.
 
-## [Unreleased]
+## [0.2.0] - 2026-10-22
 
 Ports `vasp.py`/`generic.py` from `pyiron_workflow`'s pre-0.19
 `@Workflow.wrap.as_function_node`/`as_macro_node` API to `flowrep`'s
@@ -63,6 +63,29 @@ API and execution signals (`>>`, `starting_nodes`) outright.
   concurrent evaluation of sibling DAG-layer nodes); `subprocess.run`'s
   `cwd=` argument already scopes the child process.
 
+### Packaging
+
+- **Isolated builds work.** `python -m build` (and `pip install` from an
+  sdist) no longer imports the package at build time; built sdists and
+  wheels carry a static `_version.py`, so installed copies report their real
+  version instead of `0+unknown`.
+- **The four `vasp_resources/*.csv` POTCAR tables ship in the sdist and
+  wheel.** They were missing from both, so the default POTCAR lookup pointed
+  at a nonexistent file in any non-editable install.
+- **Published dependencies are ranges, not `==` pins.** The release workflow
+  rewrites the pins to `>=lower,<upper` from `.ci_support/lower-bound.yml`
+  and `.ci_support/upper-bound.yml`, so the wheel co-installs with its
+  pyiron siblings. Dependencies were re-pinned to a set that resolves with
+  `pyiron-workflow-atomistics` 0.2.2 (`pyiron-workflow` 0.20.3, `flowrep`
+  0.6.7, `vaspparser` 0.0.12), superseding the bumps listed above;
+  numpy/scipy are capped one minor above the newest versions tested
+  (2.5.4 / 1.18.1). Release PRs now run the rewrite and build as a preview
+  without publishing.
+- **Python 3.11 - 3.13** (`requires-python = ">=3.11, <3.14"`).
+- **`LICENSE` (BSD-3-Clause) added** and included in the sdist and wheel.
+- **`monty` declared** (imported directly by `vasp_parser/outcar.py`);
+  **`matplotlib`, `scikit-learn` and `tqdm` dropped** (never imported).
+
 ### Fixed
 
 - `vasp_parser/__init__.py` advertised `__all__ = ["VaspParser", ...]` --
@@ -113,7 +136,7 @@ API and execution signals (`>>`, `starting_nodes`) outright.
   `pyiron_workflow_atomistics.engine.Engine` Protocol contract for
   `CalcInputStatic` and `CalcInputMinimize`. Wraps the existing
   POSCAR/INCAR/KPOINTS/POTCAR helpers + `generic.run_shell` (named
-  `generic.shell` at the time of this release; renamed in `[Unreleased]`
+  `generic.shell` at the time of this release; renamed in `[0.2.0]`
   above) + `vaspparser.vasp.output.parse_vasp_output` via the new internal
   `_run.py:run_vasp`. `CalcInputMD` raises `NotImplementedError` at
   construction time - MD wiring is a future PR.
