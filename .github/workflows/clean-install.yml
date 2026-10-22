@@ -1,6 +1,7 @@
 # Build the sdist and wheel in isolation and check that each installs into a
 # fresh venv (no conda env, no pre-installed deps, no --no-build-isolation)
-# and passes the test suite run from outside the checkout. Complements the
+# and passes the test suite run from outside the checkout (for the sdist, the
+# suite shipped inside the sdist itself). Complements the
 # conda-based push-pull workflow, which tests the source tree.
 name: Clean install
 
@@ -26,6 +27,16 @@ jobs:
           python -m build
           python -m twine check --strict dist/*
           ls -l dist
+      - name: Check the wheel ships no tests
+        run: |
+          python - <<'EOF'
+          import glob
+          import zipfile
+
+          (whl,) = glob.glob("dist/*.whl")
+          bad = [n for n in zipfile.ZipFile(whl).namelist() if n.startswith("tests/")]
+          assert not bad, bad
+          EOF
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -81,7 +92,20 @@ jobs:
         run: |
           testroot="${{ runner.temp }}/testrun"
           mkdir -p "$testroot"
-          # pyproject.toml carries the pytest config; no package source is copied
-          cp -r tests pyproject.toml "$testroot"/
+          if [ "${{ matrix.dist }}" = sdist ]; then
+            # Run the suite shipped *inside* the sdist (tests/ + its
+            # pyproject.toml pytest config), not the checkout's, so a
+            # MANIFEST.in regression that drops conftest.py or fixtures
+            # fails here. The package source in the extracted tree is never
+            # imported: pytest runs from $testroot and the import step above
+            # already asserted the installed copy lives in site-packages.
+            tar -xzf "${{ runner.temp }}"/dist/*.tar.gz -C "${{ runner.temp }}"
+            sdistdir=$(ls -d "${{ runner.temp }}"/pyiron_workflow_vasp-*/)
+            test -f "$sdistdir/tests/conftest.py"
+            cp -r "$sdistdir/tests" "$sdistdir/pyproject.toml" "$testroot"/
+          else
+            # pyproject.toml carries the pytest config; no package source is copied
+            cp -r tests pyproject.toml "$testroot"/
+          fi
           cd "$testroot"
           ../venv/bin/python -m pytest tests
