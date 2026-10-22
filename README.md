@@ -29,12 +29,14 @@ You also need a working `vasp_std` (or equivalent) binary on `$PATH` and a
 
 ## Dependencies
 
-- Python `>=3.10, <3.13`
-- `pyiron-workflow-atomistics == 0.2.1` (Engine Protocol)
-- `pyiron-workflow == 0.19.0`
-- `flowrep == 0.6.2` (node/workflow decorators used throughout `vasp.py`/`generic.py`)
-- `vaspparser == 0.0.9` (POSCAR/INCAR/KPOINTS/POTCAR + vasprun parsing)
-- `ase`, `pymatgen`, `numpy`, `pandas`, `scipy`, `matplotlib`, `scikit-learn`
+Published ranges (the release rewrites the `==` CI pins into these):
+
+- Python `>=3.11, <3.14`
+- `pyiron-workflow-atomistics >=0.2.2, <0.3` (Engine Protocol)
+- `pyiron-workflow >=0.19, <0.21`
+- `flowrep >=0.6, <0.7` (node/workflow decorators used throughout `vasp.py`/`generic.py`)
+- `vaspparser >=0.0.9, <0.1` (vasprun/OUTCAR parsing)
+- `ase`, `pymatgen`, `monty`, `numpy`, `pandas`, `scipy`, `pyiron_snippets`
 
 Exact pins are tracked in [`.ci_support/environment.yml`](.ci_support/environment.yml).
 
