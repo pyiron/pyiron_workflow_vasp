@@ -10,6 +10,9 @@ jobs:
     uses: ./.github/workflows/pyproject-release.yml
     secrets: inherit
     with:
-      semantic-upper-bound: 'major'
+      # 0.x deps get explicit caps from upper-bound.yml; with 'major' and the
+      # default always-pin-unstable they were published as exact == pins.
+      semantic-upper-bound: 'minor'
       lower-bound-yaml: '.ci_support/lower-bound.yml'
+      upper-bound-yaml: '.ci_support/upper-bound.yml'
       pypi-to-conda-name-map-file: '.github/actions/.support/pypi_vs_conda_names.json'
