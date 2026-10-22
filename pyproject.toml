@@ -83,14 +83,17 @@ Repository = "https://github.com/pyiron/pyiron_workflow_vasp.git"
 VCS = "git"
 style = "pep440-pre"
 versionfile_source = "pyiron_workflow_vasp/_version.py"
-parentdir_prefix = "pyiron_workflow_vasp"
+versionfile_build = "pyiron_workflow_vasp/_version.py"
+parentdir_prefix = "pyiron_workflow_vasp-"
 tag_prefix = "pyiron_workflow_vasp-"
 
 [tool.setuptools.packages.find]
 include = ["pyiron_workflow_vasp*"]
 
-[tool.setuptools.dynamic.version]
-attr = "pyiron_workflow_vasp.__version__"
+[tool.setuptools.package-data]
+# vasp_resources/ has no __init__.py, so it is picked up as a namespace
+# subpackage; its CSVs are read at runtime via Path(__file__) in vasp.py.
+"pyiron_workflow_vasp" = ["vasp_resources/*.csv"]
 
 [tool.ruff]
 exclude = [
