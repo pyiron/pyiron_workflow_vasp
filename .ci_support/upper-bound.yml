@@ -6,6 +6,11 @@ channels:
 
 dependencies:
   - flowrep =0.7.0
+  # numpy/scipy: the suite passes on numpy 2.5.4 / scipy 1.18.1 (77 passed,
+  # 3 skipped with those as overrides); the pins stay on 3.11-compatible
+  # releases, so cap one minor above the newest version tested.
+  - numpy =2.6.0
+  - scipy =1.19.0
   - monty =2027.0.0  # calendar-versioned; the default minor cap would be one month
   - pymatgen =2027.0.0  # calendar-versioned, as above
   - pyiron_snippets =2.0.0
