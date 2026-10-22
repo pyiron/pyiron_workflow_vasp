@@ -48,8 +48,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The 3.14 legs need pyiron-workflow-atomistics 0.2.4 (the first
-        # release allowing 3.14) to be on PyPI and pinned in pyproject.toml.
         python-version: ['3.11', '3.12', '3.13', '3.14']
         dist: ['wheel', 'sdist']
     steps:

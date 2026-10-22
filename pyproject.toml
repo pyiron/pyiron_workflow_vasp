@@ -42,7 +42,7 @@ dependencies = [
     "pandas==3.0.6",
     "pyiron_snippets==1.5.0",
     "pyiron-workflow==0.20.3",
-    "pyiron-workflow-atomistics==0.2.2",
+    "pyiron-workflow-atomistics==0.2.4",
     "pymatgen==2026.9.24",
     "scipy==1.17.1",
     "vaspparser==0.0.12",
