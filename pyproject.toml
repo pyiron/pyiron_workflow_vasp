@@ -145,5 +145,9 @@ addopts = "-ra -q --cov=pyiron_workflow_vasp"
 testpaths = [
     "tests",
 ]
-filterwarnings = ["error::SyntaxWarning"]
+# Only escalate SyntaxWarnings from this package: third-party modules (e.g.
+# vaspparser's outcar.py) are compiled fresh in a new env and would otherwise
+# turn into collection errors. Compile-time warnings carry the source *path*
+# (minus .py) as their module, hence a path regex rather than a dotted name.
+filterwarnings = ['error::SyntaxWarning:.*pyiron_workflow_vasp[/\\](vasp_parser[/\\])?\w+\Z']
 markers = ["integration: requires a real VASP binary (set ASSYST_VASP_BINARY)"]
